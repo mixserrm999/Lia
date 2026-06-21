@@ -2,6 +2,8 @@
   "name": "smoke",
   "version": "0.1.0",
   "main": "src/smoke.lua",
+  "bin": {
+    "smoke-cli": "bin/smoke-cli.lua"
+  },
   "dependencies": {}
 }
-

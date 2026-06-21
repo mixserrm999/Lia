@@ -10,6 +10,11 @@ static void print_publish_usage(FILE *stream) {
     fprintf(stream, "  lia publish [--registry <url>] [--token <token>]\n");
 }
 
+static void print_pack_usage(FILE *stream) {
+    fprintf(stream, "Usage:\n");
+    fprintf(stream, "  lia pack\n");
+}
+
 typedef struct {
     char *registry;
     char *token;
@@ -259,22 +264,65 @@ static char *resolve_publish_token(const char *override_token, LiaCredentials *c
     return NULL;
 }
 
-static int create_publish_archive(ProjectManifest *manifest, char **archive_path) {
-    const char *publish_dir = ".lia/tmp/publish";
-    if (remove_tree(publish_dir) != 0 ||
-        make_directory_p(publish_dir) != 0) {
+static int create_package_archive(ProjectManifest *manifest, const char *work_dir, char **archive_path) {
+    if (remove_tree(work_dir) != 0 ||
+        make_directory_p(work_dir) != 0) {
         return 1;
     }
 
-    *archive_path = format_string("%s/%s-%s.tar.gz", publish_dir, manifest->name, manifest->version);
+    *archive_path = format_string("%s/%s-%s.tar.gz", work_dir, manifest->name, manifest->version);
     if (*archive_path == NULL) {
         return 1;
     }
 
     return run_shell_command_1(
-        "tar --exclude='./.lia' --exclude='./packages' --exclude='./build' --exclude='./third_party' -czf %s .",
+        "tar --exclude='./.git' --exclude='./.lia' --exclude='./packages' --exclude='./build' --exclude='./third_party' -czf %s .",
         *archive_path
     );
+}
+
+int run_pack(int argc, char **argv) {
+    if (argc == 3 && is_flag(argv[2], "-h", "--help")) {
+        print_pack_usage(stdout);
+        return 0;
+    }
+
+    if (argc != 2) {
+        fprintf(stderr, "lia: pack accepts no arguments\n");
+        return 2;
+    }
+
+    ProjectManifest manifest;
+    if (load_project_manifest(&manifest) != 0) {
+        return 1;
+    }
+
+    if (!file_exists(manifest.main_file)) {
+        fprintf(stderr, "lia: pack main file does not exist: %s\n", manifest.main_file);
+        free_project_manifest(&manifest);
+        return 1;
+    }
+
+    char *temp_archive = NULL;
+    char *archive_name = format_string("%s-%s.tar.gz", manifest.name, manifest.version);
+    int result = 1;
+    if (archive_name == NULL) {
+        goto done;
+    }
+
+    if (create_package_archive(&manifest, ".lia/tmp/pack", &temp_archive) != 0 ||
+        copy_file_path(temp_archive, archive_name) != 0) {
+        goto done;
+    }
+
+    printf("Packed %s@%s to %s\n", manifest.name, manifest.version, archive_name);
+    result = 0;
+
+done:
+    free(temp_archive);
+    free(archive_name);
+    free_project_manifest(&manifest);
+    return result;
 }
 
 static int upload_publish_archive(const char *registry, const char *token, const char *archive_path) {
@@ -401,7 +449,7 @@ int run_publish(int argc, char **argv) {
 
     char *archive_path = NULL;
     int result = 1;
-    if (create_publish_archive(&manifest, &archive_path) != 0) {
+    if (create_package_archive(&manifest, ".lia/tmp/publish", &archive_path) != 0) {
         goto done;
     }
 

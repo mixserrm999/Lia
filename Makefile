@@ -77,6 +77,7 @@ LIA_HEADERS := \
 INIT_TEST_DIR := $(BUILD_DIR)/init-smoke
 INSTALL_TEST_DIR := $(BUILD_DIR)/install-smoke
 PACKAGE_UX_TEST_DIR := $(BUILD_DIR)/package-ux-smoke
+PHASE32_TEST_DIR := $(BUILD_DIR)/phase32-smoke
 MANIFEST_TEST_DIR := $(BUILD_DIR)/manifest-smoke
 REGISTRY_TEST_DIR := $(BUILD_DIR)/registry-smoke
 REGISTRY_RANGE_TEST_DIR := $(BUILD_DIR)/registry-range-smoke
@@ -176,6 +177,7 @@ test: build
 	grep -q '"name": "lia-smoke"' $(INIT_TEST_DIR)/lia.json
 	grep -q '"main": "src/main.lua"' $(INIT_TEST_DIR)/lia.json
 	grep -q '"start": "lia src/main.lua"' $(INIT_TEST_DIR)/lia.json
+	grep -q '"devDependencies": {}' $(INIT_TEST_DIR)/lia.json
 	cd $(INIT_TEST_DIR) && ../../$(LIA_BIN) check
 	cd $(INIT_TEST_DIR) && ! ../../$(LIA_BIN) init
 	rm -rf $(INSTALL_TEST_DIR) $(PACKAGE_UX_TEST_DIR) $(INSTALL_FIXTURE_DIR) $(INSTALL_ARCHIVE) $(SMOKE_LATEST_ARCHIVE) $(BASE_ARCHIVE) $(FEATURE_ARCHIVE)
@@ -194,6 +196,7 @@ test: build
 	cd $(INSTALL_TEST_DIR) && ../../$(LIA_BIN) install ../smoke-0.1.0.tar.gz
 	cd $(INSTALL_TEST_DIR) && ../../$(LIA_BIN) install ../feature-0.1.0.tar.gz
 	test -f $(INSTALL_TEST_DIR)/packages/smoke/lia.json
+	test -x $(INSTALL_TEST_DIR)/packages/.bin/smoke-cli
 	test -f $(INSTALL_TEST_DIR)/packages/feature/lia.json
 	test -f $(INSTALL_TEST_DIR)/packages/base/lia.json
 	test -f $(INSTALL_TEST_DIR)/lia-lock.json
@@ -208,6 +211,7 @@ test: build
 	test "$$(grep -c '^Installed base@0.1.0$$' $(INSTALL_TEST_DIR)/restore.log)" -eq 1
 	grep -q 'Installed packages from lia-lock.json' $(INSTALL_TEST_DIR)/restore.log
 	test -f $(INSTALL_TEST_DIR)/packages/smoke/lia.json
+	test -x $(INSTALL_TEST_DIR)/packages/.bin/smoke-cli
 	test -f $(INSTALL_TEST_DIR)/packages/feature/lia.json
 	test -f $(INSTALL_TEST_DIR)/packages/base/lia.json
 	mkdir -p $(INSTALL_TEST_DIR)/src
@@ -227,9 +231,41 @@ test: build
 	cd $(PACKAGE_UX_TEST_DIR) && ../../$(LIA_BIN) outdated | grep -q 'No registry packages'
 	cd $(PACKAGE_UX_TEST_DIR) && ../../$(LIA_BIN) remove smoke
 	test ! -d $(PACKAGE_UX_TEST_DIR)/packages/smoke
+	test ! -e $(PACKAGE_UX_TEST_DIR)/packages/.bin/smoke-cli
 	! grep -q '"smoke":' $(PACKAGE_UX_TEST_DIR)/lia.json
 	! grep -q '"smoke":' $(PACKAGE_UX_TEST_DIR)/lia-lock.json
 	cd $(PACKAGE_UX_TEST_DIR) && ! ../../$(LIA_BIN) info smoke
+	rm -rf $(PHASE32_TEST_DIR)
+	mkdir -p $(PHASE32_TEST_DIR)/src
+	printf 'print("phase32-main")\n' > $(PHASE32_TEST_DIR)/src/main.lua
+	printf '{\n  "name": "phase32-smoke",\n  "version": "0.1.0",\n  "main": "src/main.lua",\n  "scripts": {\n    "pretool": "echo pretool",\n    "tool": "smoke-cli",\n    "posttool": "echo posttool"\n  },\n  "dependencies": {},\n  "devDependencies": {}\n}\n' > $(PHASE32_TEST_DIR)/lia.json
+	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) install --save-dev ../smoke-0.1.0.tar.gz
+	grep -q '"devDependencies": {' $(PHASE32_TEST_DIR)/lia.json
+	grep -q '"smoke": "../smoke-0.1.0.tar.gz"' $(PHASE32_TEST_DIR)/lia.json
+	grep -q '"smoke": {"version": "0.1.0", "source": "../smoke-0.1.0.tar.gz", "integrity": "sha256:.*", "path": "packages/smoke", "dev": true}' $(PHASE32_TEST_DIR)/lia-lock.json
+	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) list | grep -q 'smoke@0.1.0 \[dev\]'
+	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) info smoke | grep -q 'dev: true'
+	test -x $(PHASE32_TEST_DIR)/packages/.bin/smoke-cli
+	cd $(PHASE32_TEST_DIR) && PATH=../../$(BUILD_DIR):$$PATH ../../$(LIA_BIN) run tool hello > run.log
+	grep -q '^pretool$$' $(PHASE32_TEST_DIR)/run.log
+	grep -q '^smoke-cli:hello$$' $(PHASE32_TEST_DIR)/run.log
+	grep -q '^posttool$$' $(PHASE32_TEST_DIR)/run.log
+	rm -rf $(PHASE32_TEST_DIR)/packages
+	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) install --production
+	test ! -e $(PHASE32_TEST_DIR)/packages/smoke/lia.json
+	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) ci
+	test -f $(PHASE32_TEST_DIR)/packages/smoke/lia.json
+	grep -q '"smoke": {"version": "0.1.0", "source": "../smoke-0.1.0.tar.gz", "integrity": "sha256:.*", "path": "packages/smoke", "dev": true}' $(PHASE32_TEST_DIR)/lia-lock.json
+	cp $(PHASE32_TEST_DIR)/lia.json $(PHASE32_TEST_DIR)/lia.json.ok
+	sed -i 's#../smoke-0.1.0.tar.gz#../missing.tar.gz#' $(PHASE32_TEST_DIR)/lia.json
+	cd $(PHASE32_TEST_DIR) && ! ../../$(LIA_BIN) ci
+	mv $(PHASE32_TEST_DIR)/lia.json.ok $(PHASE32_TEST_DIR)/lia.json
+	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) pack
+	test -f $(PHASE32_TEST_DIR)/phase32-smoke-0.1.0.tar.gz
+	tar -tzf $(PHASE32_TEST_DIR)/phase32-smoke-0.1.0.tar.gz | grep -q './lia.json'
+	! tar -tzf $(PHASE32_TEST_DIR)/phase32-smoke-0.1.0.tar.gz | grep -q './packages/'
+	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) remove smoke
+	test ! -e $(PHASE32_TEST_DIR)/packages/.bin/smoke-cli
 	rm -rf $(REGISTRY_TEST_DIR) $(REGISTRY_RANGE_TEST_DIR) $(REGISTRY_LATEST_TEST_DIR) $(PUBLISH_TEST_DIR) $(PUBLISH_INSTALL_TEST_DIR) $(PUBLISH_HOME) $(REGISTRY_ROOT) $(LIA_CACHE_DIR)
 	mkdir -p $(REGISTRY_ROOT)/packages/smoke/0.1.0 $(REGISTRY_ROOT)/packages/smoke/0.2.0 $(REGISTRY_TEST_DIR) $(REGISTRY_RANGE_TEST_DIR) $(REGISTRY_LATEST_TEST_DIR)
 	cp $(INSTALL_ARCHIVE) $(REGISTRY_ROOT)/packages/smoke/0.1.0/smoke-0.1.0.tar.gz

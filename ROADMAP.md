@@ -154,6 +154,30 @@ step should provide both the Lua runtime and the Lia package-manager CLI.
         GitHub Releases are unavailable
       - smoke tests install from a generated release archive
 
+## Phase 3.2 npm-like Daily Workflow
+
+Phase 3.2 makes day-to-day Lia projects feel closer to Node.js with npm:
+repeatable CI installs, separate development dependencies, package-provided
+commands, script lifecycle hooks, and local package archives.
+
+19. npm-like daily workflow.
+    - Status: completed
+    - Success criteria:
+      - `lia ci` performs a strict lockfile restore and fails when `lia.json`
+        and `lia-lock.json` disagree
+      - `lia install --save-dev <source>` writes `devDependencies` and marks dev
+        packages in `lia-lock.json`
+      - `lia install --production` and `lia ci --production` skip dev packages
+        during lockfile restore
+      - packages can define `bin` commands that are installed into
+        `packages/.bin`
+      - `lia run <script>` prepends `packages/.bin` to `PATH` and runs
+        `pre<script>` / `post<script>` lifecycle hooks
+      - `lia pack` creates a local package archive and `lia publish` shares the
+        same archive creation path
+      - smoke tests cover CI restore, dev dependencies, bin shims, lifecycle
+        scripts, and pack archives
+
 ## Latest Progress
 
 - 2026-06-21: Started Step 1 by scaffolding a C-based `lia` runner that embeds
@@ -241,3 +265,7 @@ step should provide both the Lua runtime and the Lia package-manager CLI.
 - 2026-06-21: Added bootstrap archive fallback for installers. If GitHub
   Releases are unavailable, installers can download checked-in `dist/` archives
   from the repository/tag and still verify `SHA256SUMS`.
+- 2026-06-21: Completed Phase 3.2 npm-like daily workflow. Added `lia ci`,
+  `devDependencies`, `lia install --save-dev`, production lockfile restores,
+  package `bin` shims in `packages/.bin`, lifecycle scripts for `lia run`, and
+  `lia pack` shared with publish archive creation.

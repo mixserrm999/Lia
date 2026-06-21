@@ -86,6 +86,21 @@ static char *json_object_string(JsonEntries *entries, const char *field_name, in
     return value;
 }
 
+static int json_object_true(JsonEntries *entries, const char *field_name) {
+    JsonEntry *entry = find_json_entry(entries, field_name);
+    if (entry == NULL) {
+        return 0;
+    }
+
+    const char *raw = entry->raw_value;
+    while (isspace((unsigned char)*raw)) {
+        raw++;
+    }
+
+    return strncmp(raw, "true", 4) == 0 &&
+           (raw[4] == '\0' || isspace((unsigned char)raw[4]));
+}
+
 static JsonEntry *find_lock_package(JsonEntries *packages, const char *package_name) {
     for (size_t i = 0; i < packages->count; i++) {
         if (strcmp(packages->items[i].key, package_name) == 0) {
@@ -156,7 +171,11 @@ int run_list(int argc, char **argv) {
 
         char *version = json_object_string(&fields, "version", 0);
         char *source = json_object_string(&fields, "source", 0);
+        int is_dev = json_object_true(&fields, "dev");
         printf("%s@%s", packages.items[i].key, version == NULL ? "unknown" : version);
+        if (is_dev) {
+            printf(" [dev]");
+        }
         if (source != NULL) {
             printf(" %s", source);
         }
@@ -212,6 +231,7 @@ int run_info(int argc, char **argv) {
     char *requirement = json_object_string(&fields, "requirement", 0);
     char *integrity = json_object_string(&fields, "integrity", 0);
     char *path = json_object_string(&fields, "path", 0);
+    int is_dev = json_object_true(&fields, "dev");
 
     printf("name: %s\n", package_name);
     if (version != NULL) {
@@ -228,6 +248,9 @@ int run_info(int argc, char **argv) {
     }
     if (path != NULL) {
         printf("path: %s\n", path);
+    }
+    if (is_dev) {
+        printf("dev: true\n");
     }
 
     free(version);
@@ -262,14 +285,22 @@ int run_remove(int argc, char **argv) {
         return 1;
     }
 
-    if (find_json_entry(&manifest.dependencies, package_name) == NULL) {
+    int in_dependencies = find_json_entry(&manifest.dependencies, package_name) != NULL;
+    int in_dev_dependencies = find_json_entry(&manifest.dev_dependencies, package_name) != NULL;
+    if (!in_dependencies && !in_dev_dependencies) {
         fprintf(stderr, "lia: dependency '%s' not found in %s\n", package_name, LIA_MANIFEST_FILE);
         free_project_manifest(&manifest);
         return 1;
     }
     free_project_manifest(&manifest);
 
-    if (remove_json_object_entry(LIA_MANIFEST_FILE, "dependencies", package_name, "    ", "  ") != 0) {
+    if (in_dependencies &&
+        remove_json_object_entry(LIA_MANIFEST_FILE, "dependencies", package_name, "    ", "  ") != 0) {
+        return 1;
+    }
+
+    if (in_dev_dependencies &&
+        remove_json_object_entry(LIA_MANIFEST_FILE, "devDependencies", package_name, "    ", "  ") != 0) {
         return 1;
     }
 
@@ -284,6 +315,9 @@ int run_remove(int argc, char **argv) {
     }
 
     int result = 0;
+    if (unlink_package_bins(package_name) != 0) {
+        result = 1;
+    }
     if (directory_exists(package_dir) && remove_tree(package_dir) != 0) {
         result = 1;
     }

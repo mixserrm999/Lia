@@ -31,6 +31,7 @@
 #define LIA_MANIFEST_FILE "lia.json"
 #define LIA_LOCK_FILE "lia-lock.json"
 #define LIA_PACKAGES_DIR "packages"
+#define LIA_PACKAGE_BIN_DIR "packages/.bin"
 #define LIA_TMP_DIR ".lia/tmp/install"
 
 typedef struct {
@@ -54,6 +55,8 @@ typedef struct {
     char *main_file;
     JsonEntries scripts;
     JsonEntries dependencies;
+    JsonEntries dev_dependencies;
+    JsonEntries bin;
 } ProjectManifest;
 
 int is_flag(const char *value, const char *short_name, const char *long_name);
@@ -96,6 +99,8 @@ int parse_json_root_entries(const char *json, JsonEntries *entries);
 char *json_get_string_value(const char *json, const char *target_key);
 char *json_raw_to_string(const char *raw_value);
 int json_raw_to_object_entries(const char *raw_value, JsonEntries *entries);
+int json_file_has_object(const char *path, const char *object_key);
+int ensure_json_object_field(const char *path, const char *object_key, const char *indent);
 int upsert_json_object_entry(
     const char *path,
     const char *object_key,
@@ -117,6 +122,8 @@ void free_project_manifest(ProjectManifest *manifest);
 int validate_string_object_values(const char *object_name, JsonEntries *entries, int validate_keys_as_package_names);
 int read_required_manifest_string(JsonEntries *root_entries, const char *field_name, char **out);
 int read_required_manifest_object(JsonEntries *root_entries, const char *field_name, JsonEntries *out);
+int read_optional_manifest_object(JsonEntries *root_entries, const char *field_name, JsonEntries *out);
+int read_optional_manifest_bin(JsonEntries *root_entries, const char *package_name, JsonEntries *out);
 int load_project_manifest(ProjectManifest *manifest);
 
 char *default_registry_url(void);
@@ -125,12 +132,15 @@ int run_check(int argc, char **argv);
 int run_manifest_script(int argc, char **argv);
 int run_login(int argc, char **argv);
 int run_publish(int argc, char **argv);
+int run_pack(int argc, char **argv);
 int run_install(int argc, char **argv);
+int run_ci(int argc, char **argv);
 int run_update(int argc, char **argv);
 int run_list(int argc, char **argv);
 int run_remove(int argc, char **argv);
 int run_info(int argc, char **argv);
 int run_outdated(int argc, char **argv);
 int run_lia_script(int argc, char **argv, int script_index);
+int unlink_package_bins(const char *package_name);
 
 #endif

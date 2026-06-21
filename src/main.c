@@ -6,8 +6,10 @@ static void print_usage(FILE *stream) {
     fprintf(stream, "Usage:\n");
     fprintf(stream, "  lia init [--name <name>] [--main <path>] [--force]\n");
     fprintf(stream, "  lia login --token <token> [--registry <url>]\n");
+    fprintf(stream, "  lia pack\n");
     fprintf(stream, "  lia publish [--registry <url>] [--token <token>]\n");
-    fprintf(stream, "  lia install [source]\n");
+    fprintf(stream, "  lia install [--save-dev] [--production] [source]\n");
+    fprintf(stream, "  lia ci [--production]\n");
     fprintf(stream, "  lia update [package]\n");
     fprintf(stream, "  lia list\n");
     fprintf(stream, "  lia remove <package>\n");
@@ -48,8 +50,16 @@ int main(int argc, char **argv) {
         return run_publish(argc, argv);
     }
 
+    if (strcmp(argv[1], "pack") == 0) {
+        return run_pack(argc, argv);
+    }
+
     if (strcmp(argv[1], "install") == 0) {
         return run_install(argc, argv);
+    }
+
+    if (strcmp(argv[1], "ci") == 0) {
+        return run_ci(argc, argv);
     }
 
     if (strcmp(argv[1], "update") == 0) {

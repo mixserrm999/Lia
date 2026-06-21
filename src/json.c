@@ -490,6 +490,106 @@ int json_raw_to_object_entries(const char *raw_value, JsonEntries *entries) {
     return parse_json_object_entries(open_brace + 1, close_brace, entries);
 }
 
+int json_file_has_object(const char *path, const char *object_key) {
+    char *json = read_file_to_string(path);
+    if (json == NULL) {
+        return 0;
+    }
+
+    const char *content_start = NULL;
+    const char *content_end = NULL;
+    int result = find_json_object_bounds(json, object_key, &content_start, &content_end);
+    free(json);
+    return result;
+}
+
+int ensure_json_object_field(const char *path, const char *object_key, const char *indent) {
+    char *json = read_file_to_string(path);
+    if (json == NULL) {
+        fprintf(stderr, "lia: failed to read %s\n", path);
+        return 1;
+    }
+
+    const char *existing_start = NULL;
+    const char *existing_end = NULL;
+    if (find_json_object_bounds(json, object_key, &existing_start, &existing_end)) {
+        free(json);
+        return 0;
+    }
+
+    const char *end = json + strlen(json);
+    const char *open_brace = skip_json_ws(json, end);
+    if (open_brace >= end || *open_brace != '{') {
+        fprintf(stderr, "lia: %s must be a JSON object\n", path);
+        free(json);
+        return 1;
+    }
+
+    const char *close_brace = find_matching_brace(open_brace, end);
+    if (close_brace == NULL) {
+        fprintf(stderr, "lia: %s must be a JSON object\n", path);
+        free(json);
+        return 1;
+    }
+
+    int has_entries = 0;
+    for (const char *cursor = open_brace + 1; cursor < close_brace; cursor++) {
+        if (!isspace((unsigned char)*cursor)) {
+            has_entries = 1;
+            break;
+        }
+    }
+
+    char *tmp_path = format_string("%s.tmp", path);
+    if (tmp_path == NULL) {
+        free(json);
+        return 1;
+    }
+
+    FILE *file = fopen(tmp_path, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "lia: failed to open %s for writing\n", tmp_path);
+        free(tmp_path);
+        free(json);
+        return 1;
+    }
+
+    const char *insert_at = close_brace;
+    while (insert_at > open_brace + 1 && isspace((unsigned char)*(insert_at - 1))) {
+        insert_at--;
+    }
+
+    fwrite(json, 1, (size_t)(insert_at - json), file);
+    if (has_entries) {
+        if (insert_at == open_brace + 1 || *(insert_at - 1) != ',') {
+            fputc(',', file);
+        }
+    }
+    fputc('\n', file);
+    fputs(indent, file);
+    write_json_string(file, object_key);
+    fputs(": {}\n", file);
+    fputs(insert_at, file);
+
+    if (fclose(file) != 0) {
+        fprintf(stderr, "lia: failed to write %s\n", tmp_path);
+        free(tmp_path);
+        free(json);
+        return 1;
+    }
+
+    if (rename(tmp_path, path) != 0) {
+        fprintf(stderr, "lia: failed to replace %s\n", path);
+        free(tmp_path);
+        free(json);
+        return 1;
+    }
+
+    free(tmp_path);
+    free(json);
+    return 0;
+}
+
 int upsert_json_object_entry(
     const char *path,
     const char *object_key,

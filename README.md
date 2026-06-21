@@ -8,9 +8,9 @@ experience similar to Node.js and npm.
 Lia now has the MVP runtime/package-manager flow plus the Phase 2 foundation:
 modular C sources, npm-like package commands, registry version resolution,
 archive cache/offline restore, hardened publish checks, release archives, and a
-small runtime standard library. It also has the first Phase 3 installer UX:
-release installers can install a prebuilt `lia` binary without requiring a
-separate Lua installation.
+small runtime standard library. Phase 3 now includes installer UX plus daily
+npm-like workflows: strict CI installs, dev dependencies, package bin commands,
+script lifecycle hooks, and package archives.
 
 ```sh
 make build
@@ -21,13 +21,17 @@ make install PREFIX="$HOME/.local"
 ./build/lia check
 ./build/lia run start
 ./build/lia install smoke@0.1.0
+./build/lia install --save-dev smoke@0.1.0
 ./build/lia install 'smoke@^0.1.0'
+./build/lia install --production
+./build/lia ci
 ./build/lia list
 ./build/lia info smoke
 ./build/lia outdated
 ./build/lia update smoke
 ./build/lia remove smoke
 ./build/lia login --token dev-token
+./build/lia pack
 ./build/lia publish
 make dist
 ./build/lia install github:owner/repo@v0.1.0
@@ -46,8 +50,12 @@ make uninstall PREFIX="$HOME/.local"
 ./build/lia run start --port 8080
 ./build/lia login --token dev-token
 ./build/lia login --registry http://127.0.0.1:7788 --token dev-token
+./build/lia pack
 ./build/lia publish
 ./build/lia install
+./build/lia install --production
+./build/lia ci
+./build/lia ci --production
 ./build/lia list
 ./build/lia info package-name
 ./build/lia outdated
@@ -55,6 +63,7 @@ make uninstall PREFIX="$HOME/.local"
 ./build/lia update package-name
 ./build/lia remove package-name
 ./build/lia install package-name
+./build/lia install --save-dev package-name
 ./build/lia install package-name@0.1.0
 ./build/lia install 'package-name@^1.0.0'
 ./build/lia install github:owner/repo@ref
@@ -199,10 +208,13 @@ make install PREFIX="$HOME/.local"
 overwrite an existing manifest unless `--force` is passed.
 
 `lia check` validates the project manifest. It requires `name`, `version`, and
-`main` string fields, plus `scripts` and `dependencies` objects.
+`main` string fields, plus `scripts` and `dependencies` objects. It also
+validates optional `devDependencies` and `bin` fields when they are present.
 
-`lia run <script>` reads a command from `scripts` in `lia.json` and passes any
-extra arguments to that command.
+`lia run <script>` reads a command from `scripts` in `lia.json`, runs optional
+`pre<script>` and `post<script>` lifecycle hooks, prepends `packages/.bin` to
+`PATH`, sets `LIA_PACKAGE_BIN_DIR`, and passes extra arguments to the main
+script command.
 
 `lia install <source>` expects the archive to contain a package-level `lia.json`
 at its root, or inside the archive's single top-level package directory. It
@@ -214,6 +226,16 @@ lockfile records each package source, resolved version, install path, and
 `sha256:` archive integrity. Restore verifies integrity before extracting an
 archive.
 
+`lia install --save-dev <source>` records a direct package under
+`devDependencies` and marks the package plus its transitive dependencies as
+`"dev": true` in `lia-lock.json`. `lia install --production` restores from the
+lockfile while skipping dev packages.
+
+`lia ci` is the strict CI restore path. It checks that `lia.json` and
+`lia-lock.json` agree for direct dependencies, removes `packages/`, and restores
+from the lockfile. `lia ci --production` applies the same strict check while
+skipping dev packages during restore.
+
 Registry installs use `LIA_REGISTRY_URL`, defaulting to
 `http://127.0.0.1:7788`:
 
@@ -224,10 +246,26 @@ LIA_REGISTRY_URL=http://127.0.0.1:7788 lia install smoke
 ```
 
 `lia login` verifies a Bearer token against the registry and stores credentials
-at `$HOME/.lia/credentials.json`. `lia publish` packages the current project,
-excluding build/cache/package directories, and uploads it to the configured
-registry. The local registry rejects duplicate published versions and records
-package ownership by token.
+at `$HOME/.lia/credentials.json`. `lia pack` creates a local
+`<name>-<version>.tar.gz` package archive. `lia publish` uses the same archive
+logic, excluding `.git`, build/cache/package directories, and uploads it to the
+configured registry. The local registry rejects duplicate published versions and
+records package ownership by token.
+
+Packages can expose command-line tools through `bin`. Lia creates executable
+shims in `packages/.bin` when a package is installed:
+
+```json
+{
+  "name": "smoke",
+  "version": "0.1.0",
+  "main": "src/smoke.lua",
+  "bin": {
+    "smoke-cli": "bin/smoke-cli.lua"
+  },
+  "dependencies": {}
+}
+```
 
 Downloaded archives are cached under `$HOME/.lia/cache` by default. Set
 `LIA_CACHE_DIR` to override this location. `lia install` from `lia-lock.json`

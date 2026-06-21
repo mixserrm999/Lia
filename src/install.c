@@ -2,9 +2,11 @@
 
 static void print_install_usage(FILE *stream) {
     fprintf(stream, "Usage:\n");
-    fprintf(stream, "  lia install [source]\n");
+    fprintf(stream, "  lia install [--save-dev] [--production] [source]\n");
     fprintf(stream, "\n");
     fprintf(stream, "Without a source, installs packages from %s.\n", LIA_LOCK_FILE);
+    fprintf(stream, "--save-dev records a direct package in devDependencies.\n");
+    fprintf(stream, "--production skips lockfile packages marked as dev dependencies.\n");
     fprintf(stream, "\n");
     fprintf(stream, "Sources:\n");
     fprintf(stream, "  package-name[@version] from $LIA_REGISTRY_URL\n");
@@ -13,6 +15,13 @@ static void print_install_usage(FILE *stream) {
     fprintf(stream, "  https://example.com/package.tgz\n");
     fprintf(stream, "  https://example.com/package.zip\n");
     fprintf(stream, "  ./local-package.tar.gz\n");
+}
+
+static void print_ci_usage(FILE *stream) {
+    fprintf(stream, "Usage:\n");
+    fprintf(stream, "  lia ci [--production]\n");
+    fprintf(stream, "\n");
+    fprintf(stream, "Strictly restores %s after checking it matches %s.\n", LIA_LOCK_FILE, LIA_MANIFEST_FILE);
 }
 
 static void print_update_usage(FILE *stream) {
@@ -45,6 +54,7 @@ typedef struct {
     StringList resolved;
     int workspace_counter;
     int install_dependencies;
+    int dev_dependency;
 } InstallContext;
 
 static void free_resolved_install_source(ResolvedInstallSource *source) {
@@ -111,6 +121,7 @@ static void init_install_context(InstallContext *context) {
     context->resolved.count = 0;
     context->workspace_counter = 0;
     context->install_dependencies = 1;
+    context->dev_dependency = 0;
 }
 
 static void free_install_context(InstallContext *context) {
@@ -118,6 +129,7 @@ static void free_install_context(InstallContext *context) {
     free_string_list(&context->resolved);
     context->workspace_counter = 0;
     context->install_dependencies = 1;
+    context->dev_dependency = 0;
 }
 
 int parse_dependency_spec(const char *raw_value, DependencySpec *spec) {
@@ -976,20 +988,31 @@ static int ensure_lock_file(void) {
     return 0;
 }
 
-static int update_project_dependencies(const char *package_name, const char *source) {
+static int update_project_dependencies(const char *package_name, const char *source, int save_dev) {
     char *quoted_source = json_quote_string(source);
     if (quoted_source == NULL) {
         return 1;
     }
 
+    const char *target_object = save_dev ? "devDependencies" : "dependencies";
+    const char *other_object = save_dev ? "dependencies" : "devDependencies";
+    if (save_dev && ensure_json_object_field(LIA_MANIFEST_FILE, "devDependencies", "  ") != 0) {
+        free(quoted_source);
+        return 1;
+    }
+
     int result = upsert_json_object_entry(
         LIA_MANIFEST_FILE,
-        "dependencies",
+        target_object,
         package_name,
         quoted_source,
         "    ",
         "  "
     );
+
+    if (result == 0 && json_file_has_object(LIA_MANIFEST_FILE, other_object)) {
+        result = remove_json_object_entry(LIA_MANIFEST_FILE, other_object, package_name, "    ", "  ");
+    }
 
     free(quoted_source);
     return result;
@@ -1001,7 +1024,8 @@ static int update_lock_file(
     const char *source,
     const char *constraint,
     const char *integrity,
-    const char *install_path
+    const char *install_path,
+    int is_dev
 ) {
     if (ensure_lock_file() != 0) {
         return 1;
@@ -1026,20 +1050,22 @@ static int update_lock_file(
     char *raw_entry = NULL;
     if (constraint == NULL) {
         raw_entry = format_string(
-            "{\"version\": %s, \"source\": %s, \"integrity\": %s, \"path\": %s}",
+            "{\"version\": %s, \"source\": %s, \"integrity\": %s, \"path\": %s%s}",
             quoted_version,
             quoted_source,
             quoted_integrity == NULL ? "\"\"" : quoted_integrity,
-            quoted_path
+            quoted_path,
+            is_dev ? ", \"dev\": true" : ""
         );
     } else {
         raw_entry = format_string(
-            "{\"version\": %s, \"source\": %s, \"requirement\": %s, \"integrity\": %s, \"path\": %s}",
+            "{\"version\": %s, \"source\": %s, \"requirement\": %s, \"integrity\": %s, \"path\": %s%s}",
             quoted_version,
             quoted_source,
             quoted_constraint,
             quoted_integrity == NULL ? "\"\"" : quoted_integrity,
-            quoted_path
+            quoted_path,
+            is_dev ? ", \"dev\": true" : ""
         );
     }
 
@@ -1070,6 +1096,7 @@ typedef struct {
     char *name;
     char *version;
     JsonEntries dependencies;
+    JsonEntries bin;
 } PackageInfo;
 
 static void init_package_info(PackageInfo *info) {
@@ -1077,12 +1104,15 @@ static void init_package_info(PackageInfo *info) {
     info->version = NULL;
     info->dependencies.items = NULL;
     info->dependencies.count = 0;
+    info->bin.items = NULL;
+    info->bin.count = 0;
 }
 
 static void free_package_info(PackageInfo *info) {
     free(info->name);
     free(info->version);
     free_json_entries(&info->dependencies);
+    free_json_entries(&info->bin);
     init_package_info(info);
 }
 
@@ -1120,7 +1150,8 @@ static int read_package_info(const char *package_root, PackageInfo *info) {
         goto done;
     }
 
-    if (validate_string_object_values("dependencies", &info->dependencies, 1) != 0) {
+    if (validate_string_object_values("dependencies", &info->dependencies, 1) != 0 ||
+        read_optional_manifest_bin(&root_entries, info->name, &info->bin) != 0) {
         goto done;
     }
 
@@ -1132,6 +1163,117 @@ done:
     if (result != 0) {
         free_package_info(info);
     }
+    return result;
+}
+
+static int link_package_bins(const char *package_name, const char *install_path, JsonEntries *bin_entries) {
+    if (bin_entries->count == 0) {
+        return 0;
+    }
+
+    if (make_directory_p(LIA_PACKAGE_BIN_DIR) != 0) {
+        return 1;
+    }
+
+    for (size_t i = 0; i < bin_entries->count; i++) {
+        char *bin_path = json_raw_to_string(bin_entries->items[i].raw_value);
+        if (bin_path == NULL || !is_non_empty_text(bin_path)) {
+            fprintf(stderr, "lia: bin.%s must be a non-empty string\n", bin_entries->items[i].key);
+            free(bin_path);
+            return 1;
+        }
+
+        char *package_script = join_path(install_path, bin_path);
+        char *command_path = join_path(LIA_PACKAGE_BIN_DIR, bin_entries->items[i].key);
+        char *relative_script = format_string("../%s/%s", package_name, bin_path);
+        free(bin_path);
+        if (package_script == NULL || command_path == NULL || relative_script == NULL) {
+            free(package_script);
+            free(command_path);
+            free(relative_script);
+            return 1;
+        }
+
+        if (!file_exists(package_script)) {
+            fprintf(stderr, "lia: bin target does not exist: %s\n", package_script);
+            free(package_script);
+            free(command_path);
+            free(relative_script);
+            return 1;
+        }
+
+        char *quoted_script = shell_quote(relative_script);
+        free(package_script);
+        free(relative_script);
+        if (quoted_script == NULL) {
+            free(command_path);
+            return 1;
+        }
+
+        FILE *file = fopen(command_path, "w");
+        if (file == NULL) {
+            fprintf(stderr, "lia: failed to create package bin %s\n", command_path);
+            free(quoted_script);
+            free(command_path);
+            return 1;
+        }
+
+        fputs("#!/bin/sh\n", file);
+        fputs("script_dir=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n", file);
+        fprintf(file, "exec lia \"$script_dir\"/%s \"$@\"\n", quoted_script);
+        free(quoted_script);
+
+        if (fclose(file) != 0) {
+            fprintf(stderr, "lia: failed to write package bin %s\n", command_path);
+            free(command_path);
+            return 1;
+        }
+
+        int chmod_result = run_shell_command_1("chmod +x %s", command_path);
+        free(command_path);
+        if (chmod_result != 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int unlink_package_bins(const char *package_name) {
+    char *package_dir = join_path(LIA_PACKAGES_DIR, package_name);
+    if (package_dir == NULL) {
+        return 1;
+    }
+
+    if (!directory_exists(package_dir)) {
+        free(package_dir);
+        return 0;
+    }
+
+    PackageInfo package_info;
+    if (read_package_info(package_dir, &package_info) != 0) {
+        free(package_dir);
+        return 1;
+    }
+
+    int result = 0;
+    for (size_t i = 0; i < package_info.bin.count; i++) {
+        char *command_path = join_path(LIA_PACKAGE_BIN_DIR, package_info.bin.items[i].key);
+        if (command_path == NULL) {
+            result = 1;
+            break;
+        }
+
+        if (file_exists(command_path) && remove_tree(command_path) != 0) {
+            result = 1;
+            free(command_path);
+            break;
+        }
+        free(command_path);
+    }
+
+    free_package_info(&package_info);
+    free(package_dir);
     return result;
 }
 
@@ -1282,19 +1424,25 @@ static int install_package_from_root(
         goto done;
     }
 
-    if (remove_tree(install_path) != 0 ||
+    if (unlink_package_bins(package_info.name) != 0 ||
+        remove_tree(install_path) != 0 ||
         make_directory_p(install_path) != 0 ||
         copy_directory_contents(package_root, install_path) != 0) {
         free(install_path);
         goto done;
     }
 
-    if (record_direct_dependency && update_project_dependencies(package_info.name, source) != 0) {
+    if (link_package_bins(package_info.name, install_path, &package_info.bin) != 0) {
         free(install_path);
         goto done;
     }
 
-    if (update_lock_file(package_info.name, package_info.version, source, constraint, integrity, install_path) != 0) {
+    if (record_direct_dependency && update_project_dependencies(package_info.name, source, context->dev_dependency) != 0) {
+        free(install_path);
+        goto done;
+    }
+
+    if (update_lock_file(package_info.name, package_info.version, source, constraint, integrity, install_path, context->dev_dependency) != 0) {
         free(install_path);
         goto done;
     }
@@ -1386,7 +1534,7 @@ static int install_source_recursive(
         return result;
     }
 
-    if (expected_integrity == NULL && !record_direct_dependency && expected_name != NULL) {
+    if (expected_integrity == NULL && !record_direct_dependency && expected_name != NULL && context->dev_dependency) {
         int is_satisfied = 0;
         if (installed_package_satisfies(expected_name, spec.constraint, &is_satisfied) != 0) {
             free_dependency_spec(&spec);
@@ -1503,6 +1651,21 @@ static char *json_object_get_string(JsonEntries *entries, const char *field_name
     return value;
 }
 
+static int json_object_get_true(JsonEntries *entries, const char *field_name) {
+    JsonEntry *entry = find_json_entry(entries, field_name);
+    if (entry == NULL) {
+        return 0;
+    }
+
+    const char *raw = entry->raw_value;
+    while (isspace((unsigned char)*raw)) {
+        raw++;
+    }
+
+    return strncmp(raw, "true", 4) == 0 &&
+           (raw[4] == '\0' || isspace((unsigned char)raw[4]));
+}
+
 static int read_lock_packages(JsonEntries *packages) {
     packages->items = NULL;
     packages->count = 0;
@@ -1545,7 +1708,7 @@ done:
     return result;
 }
 
-static int install_from_lockfile(void) {
+static int install_from_lockfile(int production_only) {
     JsonEntries packages;
     if (read_lock_packages(&packages) != 0) {
         return 1;
@@ -1580,6 +1743,7 @@ static int install_from_lockfile(void) {
         char *source = json_object_get_string(&fields, "source", 1);
         char *integrity = json_object_get_string(&fields, "integrity", 1);
         char *version = json_object_get_string(&fields, "version", 1);
+        int is_dev = json_object_get_true(&fields, "dev");
 
         if (source == NULL || integrity == NULL || version == NULL) {
             free(source);
@@ -1588,6 +1752,14 @@ static int install_from_lockfile(void) {
             free_json_entries(&fields);
             result = 1;
             break;
+        }
+
+        if (production_only && is_dev) {
+            free(source);
+            free(integrity);
+            free(version);
+            free_json_entries(&fields);
+            continue;
         }
 
         char *exact_source = NULL;
@@ -1605,7 +1777,10 @@ static int install_from_lockfile(void) {
             install_source = exact_source;
         }
 
+        int previous_dev_dependency = context.dev_dependency;
+        context.dev_dependency = is_dev;
         int install_result = install_source_recursive(&context, install_source, package_entry->key, integrity, 0);
+        context.dev_dependency = previous_dev_dependency;
         free(exact_source);
         free(source);
         free(integrity);
@@ -1630,13 +1805,40 @@ static int install_from_lockfile(void) {
 }
 
 int run_install(int argc, char **argv) {
-    if (argc == 3 && is_flag(argv[2], "-h", "--help")) {
-        print_install_usage(stdout);
-        return 0;
+    const char *source = NULL;
+    int save_dev = 0;
+    int production_only = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (is_flag(argv[i], "-h", "--help")) {
+            print_install_usage(stdout);
+            return 0;
+        }
+
+        if (strcmp(argv[i], "--save-dev") == 0 || strcmp(argv[i], "-D") == 0) {
+            save_dev = 1;
+            continue;
+        }
+
+        if (strcmp(argv[i], "--production") == 0) {
+            production_only = 1;
+            continue;
+        }
+
+        if (source != NULL) {
+            fprintf(stderr, "lia: install accepts zero or one source\n");
+            return 2;
+        }
+        source = argv[i];
     }
 
-    if (argc > 3) {
-        fprintf(stderr, "lia: install accepts zero or one source\n");
+    if (save_dev && source == NULL) {
+        fprintf(stderr, "lia: --save-dev requires a package source\n");
+        return 2;
+    }
+
+    if (save_dev && production_only) {
+        fprintf(stderr, "lia: --save-dev cannot be combined with --production\n");
         return 2;
     }
 
@@ -1646,16 +1848,144 @@ int run_install(int argc, char **argv) {
     }
     free_project_manifest(&manifest);
 
-    if (argc == 2) {
-        return install_from_lockfile();
+    if (source == NULL) {
+        return install_from_lockfile(production_only);
     }
 
     InstallContext context;
     init_install_context(&context);
+    context.dev_dependency = save_dev;
 
-    int result = install_source_recursive(&context, argv[2], NULL, NULL, 1);
+    int result = install_source_recursive(&context, source, NULL, NULL, 1);
     remove_tree(".lia/tmp");
     free_install_context(&context);
+    return result;
+}
+
+static JsonEntry *find_lock_package_entry(JsonEntries *packages, const char *package_name) {
+    for (size_t i = 0; i < packages->count; i++) {
+        if (strcmp(packages->items[i].key, package_name) == 0) {
+            return &packages->items[i];
+        }
+    }
+
+    return NULL;
+}
+
+static int check_locked_dependency(JsonEntries *packages, JsonEntry *dependency, int expected_dev) {
+    char *manifest_source = json_raw_to_string(dependency->raw_value);
+    if (manifest_source == NULL || !is_non_empty_text(manifest_source)) {
+        fprintf(stderr, "lia: dependency '%s' must be a non-empty string\n", dependency->key);
+        free(manifest_source);
+        return 1;
+    }
+
+    JsonEntry *lock_entry = find_lock_package_entry(packages, dependency->key);
+    if (lock_entry == NULL) {
+        fprintf(stderr, "lia: %s is missing locked package '%s'\n", LIA_LOCK_FILE, dependency->key);
+        free(manifest_source);
+        return 1;
+    }
+
+    JsonEntries fields;
+    if (!json_raw_to_object_entries(lock_entry->raw_value, &fields)) {
+        fprintf(stderr, "lia: lockfile package '%s' must be an object\n", dependency->key);
+        free(manifest_source);
+        return 1;
+    }
+
+    char *locked_source = json_object_get_string(&fields, "source", 1);
+    int locked_dev = json_object_get_true(&fields, "dev");
+    int result = 0;
+    if (locked_source == NULL) {
+        result = 1;
+    } else if (strcmp(manifest_source, locked_source) != 0) {
+        fprintf(stderr,
+                "lia: %s is out of sync for '%s' (manifest: %s, lockfile: %s)\n",
+                LIA_LOCK_FILE,
+                dependency->key,
+                manifest_source,
+                locked_source);
+        result = 1;
+    } else if (expected_dev != locked_dev) {
+        fprintf(stderr,
+                "lia: %s has wrong dependency type for '%s'\n",
+                LIA_LOCK_FILE,
+                dependency->key);
+        result = 1;
+    }
+
+    free(locked_source);
+    free_json_entries(&fields);
+    free(manifest_source);
+    return result;
+}
+
+static int check_locked_dependency_group(JsonEntries *packages, JsonEntries *dependencies, int expected_dev) {
+    for (size_t i = 0; i < dependencies->count; i++) {
+        if (check_locked_dependency(packages, &dependencies->items[i], expected_dev) != 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int check_lockfile_matches_manifest(ProjectManifest *manifest) {
+    JsonEntries packages;
+    if (read_lock_packages(&packages) != 0) {
+        return 1;
+    }
+
+    int result = 0;
+    if (check_locked_dependency_group(&packages, &manifest->dependencies, 0) != 0 ||
+        check_locked_dependency_group(&packages, &manifest->dev_dependencies, 1) != 0) {
+        result = 1;
+    }
+
+    free_json_entries(&packages);
+    return result;
+}
+
+int run_ci(int argc, char **argv) {
+    int production_only = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (is_flag(argv[i], "-h", "--help")) {
+            print_ci_usage(stdout);
+            return 0;
+        }
+
+        if (strcmp(argv[i], "--production") == 0) {
+            production_only = 1;
+            continue;
+        }
+
+        fprintf(stderr, "lia: unknown ci option: %s\n", argv[i]);
+        return 2;
+    }
+
+    ProjectManifest manifest;
+    if (load_project_manifest(&manifest) != 0) {
+        return 1;
+    }
+
+    int result = 1;
+    if (check_lockfile_matches_manifest(&manifest) != 0) {
+        goto done;
+    }
+
+    if (remove_tree(LIA_PACKAGES_DIR) != 0) {
+        goto done;
+    }
+
+    result = install_from_lockfile(production_only);
+    if (result == 0) {
+        printf("Clean install complete\n");
+    }
+
+done:
+    free_project_manifest(&manifest);
     return result;
 }
 
@@ -1689,6 +2019,7 @@ int run_update(int argc, char **argv) {
 
     int result = 0;
     int updated = 0;
+    context.dev_dependency = 0;
     for (size_t i = 0; i < manifest.dependencies.count; i++) {
         JsonEntry *dependency = &manifest.dependencies.items[i];
         if (only_package != NULL && strcmp(dependency->key, only_package) != 0) {
@@ -1698,6 +2029,30 @@ int run_update(int argc, char **argv) {
         char *source = json_raw_to_string(dependency->raw_value);
         if (source == NULL || !is_non_empty_text(source)) {
             fprintf(stderr, "lia: dependencies.%s must be a non-empty string\n", dependency->key);
+            free(source);
+            result = 1;
+            break;
+        }
+
+        int install_result = install_source_recursive(&context, source, dependency->key, NULL, 1);
+        free(source);
+        if (install_result != 0) {
+            result = install_result;
+            break;
+        }
+        updated++;
+    }
+
+    context.dev_dependency = 1;
+    for (size_t i = 0; result == 0 && i < manifest.dev_dependencies.count; i++) {
+        JsonEntry *dependency = &manifest.dev_dependencies.items[i];
+        if (only_package != NULL && strcmp(dependency->key, only_package) != 0) {
+            continue;
+        }
+
+        char *source = json_raw_to_string(dependency->raw_value);
+        if (source == NULL || !is_non_empty_text(source)) {
+            fprintf(stderr, "lia: devDependencies.%s must be a non-empty string\n", dependency->key);
             free(source);
             result = 1;
             break;

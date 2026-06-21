@@ -71,7 +71,9 @@ def validate_manifest(manifest):
     version = manifest.get("version")
     main = manifest.get("main")
     dependencies = manifest.get("dependencies", {})
+    dev_dependencies = manifest.get("devDependencies", {})
     scripts = manifest.get("scripts", {})
+    bin_value = manifest.get("bin", {})
 
     if not isinstance(name, str) or not is_safe_part(name):
         raise ValueError("manifest name is invalid")
@@ -84,11 +86,27 @@ def validate_manifest(manifest):
         for key, value in dependencies.items()
     ):
         raise ValueError("manifest dependencies must be an object of package string values")
+    if not isinstance(dev_dependencies, dict) or not all(
+        isinstance(key, str) and is_safe_part(key) and isinstance(value, str) and value.strip()
+        for key, value in dev_dependencies.items()
+    ):
+        raise ValueError("manifest devDependencies must be an object of package string values")
     if not isinstance(scripts, dict) or not all(
         isinstance(key, str) and is_safe_part(key.replace(":", "-")) and isinstance(value, str) and value.strip()
         for key, value in scripts.items()
     ):
         raise ValueError("manifest scripts must be an object of string values")
+    if isinstance(bin_value, str):
+        if not bin_value.strip():
+            raise ValueError("manifest bin must be a non-empty string")
+    elif isinstance(bin_value, dict):
+        if not all(
+            isinstance(key, str) and is_safe_part(key) and isinstance(value, str) and value.strip()
+            for key, value in bin_value.items()
+        ):
+            raise ValueError("manifest bin must be a string or an object of string values")
+    else:
+        raise ValueError("manifest bin must be a string or object")
 
     return name, version
 
@@ -160,6 +178,8 @@ class Registry:
             "version": manifest.get("version", resolved_version),
             "main": manifest.get("main"),
             "dependencies": manifest.get("dependencies", {}),
+            "devDependencies": manifest.get("devDependencies", {}),
+            "bin": manifest.get("bin", {}),
             "tarball": tarball,
         }
 
