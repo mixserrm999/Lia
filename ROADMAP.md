@@ -131,6 +131,27 @@ releases.
       - document each runtime module
       - add tests for each runtime module
 
+## Phase 3.1 Installer UX
+
+Phase 3.1 makes Lia feel closer to installing Node.js with npm: one install
+step should provide both the Lua runtime and the Lia package-manager CLI.
+
+18. Node-like installer and release experience.
+    - Status: completed
+    - Success criteria:
+      - Ubuntu/Linux users can install from the latest GitHub Release with one
+        shell command
+      - Windows users can install from the latest GitHub Release with one
+        PowerShell command
+      - installers detect platform and architecture before installing
+      - installers download release archives, verify `SHA256SUMS` when
+        installing from GitHub Releases, install `lia`, verify `lia --version`,
+        and update or report PATH setup
+      - installers support uninstall and source-checkout development installs
+      - tag pushes create or update a GitHub Release with Linux and Windows
+        archives plus a combined checksum file
+      - smoke tests install from a generated release archive
+
 ## Latest Progress
 
 - 2026-06-21: Started Step 1 by scaffolding a C-based `lia` runner that embeds
@@ -211,3 +232,7 @@ releases.
 - 2026-06-21: Cleaned up lockfile restore UX so `lia install` restores each
   lockfile package once instead of recursively reinstalling transitive
   dependencies that are already represented in `lia-lock.json`.
+- 2026-06-21: Completed Phase 3.1 installer UX. Linux and Windows installers
+  now support one-line release installs, release checksum verification, PATH
+  setup, uninstall, source-checkout installs, and release-archive smoke tests.
+  The release workflow now publishes GitHub Release assets for tag pushes.

@@ -8,7 +8,9 @@ experience similar to Node.js and npm.
 Lia now has the MVP runtime/package-manager flow plus the Phase 2 foundation:
 modular C sources, npm-like package commands, registry version resolution,
 archive cache/offline restore, hardened publish checks, release archives, and a
-small runtime standard library.
+small runtime standard library. It also has the first Phase 3 installer UX:
+release installers can install a prebuilt `lia` binary without requiring a
+separate Lua installation.
 
 ```sh
 make build
@@ -118,35 +120,77 @@ Current stdlib modules:
 
 ## Installation
 
-Ubuntu/Linux local user install:
+Lia release installs include the Lua runtime and the package-manager CLI in one
+`lia` binary. Users do not need to install Lua separately.
+
+Ubuntu/Linux one-line install:
 
 ```sh
-./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/mixserrm999/Lia/main/scripts/install.sh | sh
 ```
 
 Ubuntu/Linux system install:
 
 ```sh
-sudo ./scripts/install.sh --system
+curl -fsSL https://raw.githubusercontent.com/mixserrm999/Lia/main/scripts/install.sh | sudo sh -s -- --system
 ```
 
-Manual install with `make`:
-
-```sh
-make build
-make install PREFIX="$HOME/.local"
-```
-
-Windows PowerShell install:
+Windows PowerShell one-line install:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -AddToPath
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mixserrm999/Lia/main/scripts/install.ps1 | iex"
+```
+
+After install, open a new terminal if PATH was changed, then run:
+
+```sh
+lia --version
+lia init
+lia install
+lia run start
+```
+
+Install a specific release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mixserrm999/Lia/main/scripts/install.sh | sh -s -- --version v0.1.1
+```
+
+Install from a local release archive:
+
+```sh
+sh scripts/install.sh --archive dist/lia-0.1.1-linux-x64.tar.gz
+```
+
+Uninstall from the default Linux prefix:
+
+```sh
+sh scripts/install.sh --uninstall
+```
+
+Source checkout install for development:
+
+```sh
+./scripts/install.sh --from-source
 ```
 
 Windows uninstall from the default prefix:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall
+```
+
+Windows source checkout install for development:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -FromSource
+```
+
+Manual install with `make` is still supported:
+
+```sh
+make build
+make install PREFIX="$HOME/.local"
 ```
 
 `lia init` creates a `lia.json` manifest in the current directory and refuses to
@@ -226,8 +270,9 @@ cat dist/SHA256SUMS
 ```
 
 The GitHub Actions workflow in `.github/workflows/release.yml` builds Linux and
-Windows artifacts for tag pushes and manual runs. The release script is
-`tools/make_dist.py`.
+Windows artifacts for tag pushes and manual runs. On tag pushes, it also creates
+or updates the matching GitHub Release and uploads `.tar.gz`, `.zip`, and a
+combined `SHA256SUMS` file. The release script is `tools/make_dist.py`.
 
 ## Registry
 

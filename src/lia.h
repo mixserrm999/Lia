@@ -25,7 +25,7 @@
 #include "lualib.h"
 
 #ifndef LIA_VERSION
-#define LIA_VERSION "0.1.0"
+#define LIA_VERSION "0.1.1"
 #endif
 
 #define LIA_MANIFEST_FILE "lia.json"

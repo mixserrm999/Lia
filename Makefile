@@ -1,5 +1,5 @@
 LUA_VERSION ?= 5.4.7
-LIA_VERSION ?= 0.1.0
+LIA_VERSION ?= 0.1.1
 
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra
@@ -89,6 +89,8 @@ REGISTRY_PORT := 7789
 REGISTRY_TOKEN := test-token
 LIA_CACHE_DIR := $(BUILD_DIR)/lia-cache
 INSTALL_PREFIX := $(BUILD_DIR)/install-prefix
+RELEASE_INSTALL_PREFIX := $(BUILD_DIR)/release-install-prefix
+DIST_SMOKE_DIR := $(BUILD_DIR)/dist-smoke
 INSTALL_FIXTURE_DIR := $(BUILD_DIR)/package-fixture
 INSTALL_ARCHIVE := $(BUILD_DIR)/smoke-0.1.0.tar.gz
 SMOKE_LATEST_ARCHIVE := $(BUILD_DIR)/smoke-0.2.0.tar.gz
@@ -113,7 +115,7 @@ build: $(LIA_BIN)
 dist: build
 	python3 tools/make_dist.py --version "$(LIA_VERSION)" --platform "$(DIST_PLATFORM)" --binary "$(LIA_BIN)" --out "$(DIST_DIR)"
 
-$(LIA_BIN): $(LIA_SOURCES) $(LIA_HEADERS) $(LUA_SOURCES) | $(BUILD_MARKER)
+$(LIA_BIN): $(LIA_SOURCES) $(LIA_HEADERS) $(LUA_SOURCES) Makefile | $(BUILD_MARKER)
 	$(CC) $(CFLAGS) $(LUA_PLATFORM_FLAGS) \
 		-DLIA_VERSION=\"$(LIA_VERSION)\" \
 		-I$(LUA_SRC_DIR) \
@@ -143,6 +145,7 @@ uninstall:
 test: build
 	./$(LIA_BIN) --version
 	sh -n scripts/install.sh
+	sh scripts/install.sh --help >/dev/null
 	python3 -m py_compile tools/make_dist.py tools/registry/server.py
 	if command -v pwsh >/dev/null 2>&1; then pwsh -NoProfile -File scripts/install.ps1 -Help >/dev/null; fi
 	rm -rf $(INSTALL_PREFIX)
@@ -151,6 +154,14 @@ test: build
 	$(INSTALL_PREFIX)/bin/lia$(EXE) --version
 	$(MAKE) uninstall PREFIX=$(abspath $(INSTALL_PREFIX))
 	test ! -e $(INSTALL_PREFIX)/bin/lia$(EXE)
+	rm -rf $(DIST_SMOKE_DIR) $(RELEASE_INSTALL_PREFIX)
+	python3 tools/make_dist.py --version "$(LIA_VERSION)" --platform "linux-x64" --binary "$(LIA_BIN)" --out "$(DIST_SMOKE_DIR)"
+	cd $(DIST_SMOKE_DIR) && sha256sum -c SHA256SUMS
+	sh scripts/install.sh --archive "$(abspath $(DIST_SMOKE_DIR))/lia-$(LIA_VERSION)-linux-x64.tar.gz" --prefix "$(abspath $(RELEASE_INSTALL_PREFIX))" --no-path
+	test -x $(RELEASE_INSTALL_PREFIX)/bin/lia$(EXE)
+	$(RELEASE_INSTALL_PREFIX)/bin/lia$(EXE) --version | grep -q 'lia $(LIA_VERSION)'
+	sh scripts/install.sh --prefix "$(abspath $(RELEASE_INSTALL_PREFIX))" --uninstall --no-path
+	test ! -e $(RELEASE_INSTALL_PREFIX)/bin/lia$(EXE)
 	./$(LIA_BIN) examples/hello.lua Codex
 	./$(LIA_BIN) examples/args.lua first second
 	./$(LIA_BIN) examples/runtime.lua step10 | grep -q 'runtime=Lia $(LIA_VERSION)'
