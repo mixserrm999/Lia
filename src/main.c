@@ -7,7 +7,12 @@ static void print_usage(FILE *stream) {
     fprintf(stream, "  lia init [--name <name>] [--main <path>] [--force]\n");
     fprintf(stream, "  lia login --token <token> [--registry <url>]\n");
     fprintf(stream, "  lia pack\n");
-    fprintf(stream, "  lia publish [--registry <url>] [--token <token>]\n");
+    fprintf(stream, "  lia publish [--tag <tag>] [--registry <url>] [--token <token>]\n");
+    fprintf(stream, "  lia search <term> [--registry <url>]\n");
+    fprintf(stream, "  lia deprecate <package>@<version> <message> [--registry <url>] [--token <token>]\n");
+    fprintf(stream, "  lia config get <key>\n");
+    fprintf(stream, "  lia config set <key> <value>\n");
+    fprintf(stream, "  lia doctor\n");
     fprintf(stream, "  lia install [--save-dev] [--production] [source]\n");
     fprintf(stream, "  lia ci [--production]\n");
     fprintf(stream, "  lia update [package]\n");
@@ -52,6 +57,22 @@ int main(int argc, char **argv) {
 
     if (strcmp(argv[1], "pack") == 0) {
         return run_pack(argc, argv);
+    }
+
+    if (strcmp(argv[1], "search") == 0) {
+        return run_search(argc, argv);
+    }
+
+    if (strcmp(argv[1], "deprecate") == 0) {
+        return run_deprecate(argc, argv);
+    }
+
+    if (strcmp(argv[1], "config") == 0) {
+        return run_config(argc, argv);
+    }
+
+    if (strcmp(argv[1], "doctor") == 0) {
+        return run_doctor(argc, argv);
     }
 
     if (strcmp(argv[1], "install") == 0) {

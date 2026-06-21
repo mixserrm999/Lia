@@ -805,8 +805,20 @@ static char *lia_cache_root(void) {
 
     const char *home = getenv("HOME");
     if (home != NULL && home[0] != '\0') {
+        char *configured_cache = lia_config_get("cache");
+        if (configured_cache != NULL && configured_cache[0] != '\0') {
+            return configured_cache;
+        }
+        free(configured_cache);
+
         return format_string("%s/.lia/cache", home);
     }
+
+    char *configured_cache = lia_config_get("cache");
+    if (configured_cache != NULL && configured_cache[0] != '\0') {
+        return configured_cache;
+    }
+    free(configured_cache);
 
     return duplicate_string(".lia/cache");
 }
@@ -976,7 +988,7 @@ static int ensure_lock_file(void) {
     }
 
     fputs("{\n", file);
-    fputs("  \"lockfileVersion\": 1,\n", file);
+    fprintf(file, "  \"lockfileVersion\": %d,\n", LIA_LOCKFILE_VERSION);
     fputs("  \"packages\": {}\n", file);
     fputs("}\n", file);
 
@@ -1186,8 +1198,8 @@ static int link_package_bins(const char *package_name, const char *install_path,
         char *package_script = join_path(install_path, bin_path);
         char *command_path = join_path(LIA_PACKAGE_BIN_DIR, bin_entries->items[i].key);
         char *relative_script = format_string("../%s/%s", package_name, bin_path);
-        free(bin_path);
         if (package_script == NULL || command_path == NULL || relative_script == NULL) {
+            free(bin_path);
             free(package_script);
             free(command_path);
             free(relative_script);
@@ -1196,6 +1208,7 @@ static int link_package_bins(const char *package_name, const char *install_path,
 
         if (!file_exists(package_script)) {
             fprintf(stderr, "lia: bin target does not exist: %s\n", package_script);
+            free(bin_path);
             free(package_script);
             free(command_path);
             free(relative_script);
@@ -1206,6 +1219,7 @@ static int link_package_bins(const char *package_name, const char *install_path,
         free(package_script);
         free(relative_script);
         if (quoted_script == NULL) {
+            free(bin_path);
             free(command_path);
             return 1;
         }
@@ -1213,6 +1227,7 @@ static int link_package_bins(const char *package_name, const char *install_path,
         FILE *file = fopen(command_path, "w");
         if (file == NULL) {
             fprintf(stderr, "lia: failed to create package bin %s\n", command_path);
+            free(bin_path);
             free(quoted_script);
             free(command_path);
             return 1;
@@ -1225,11 +1240,40 @@ static int link_package_bins(const char *package_name, const char *install_path,
 
         if (fclose(file) != 0) {
             fprintf(stderr, "lia: failed to write package bin %s\n", command_path);
+            free(bin_path);
             free(command_path);
             return 1;
         }
 
         int chmod_result = run_shell_command_1("chmod +x %s", command_path);
+#ifdef _WIN32
+        char *cmd_path = format_string("%s.cmd", command_path);
+        if (cmd_path == NULL) {
+            free(bin_path);
+            free(command_path);
+            return 1;
+        }
+
+        FILE *cmd_file = fopen(cmd_path, "w");
+        if (cmd_file == NULL) {
+            fprintf(stderr, "lia: failed to create package bin %s\n", cmd_path);
+            free(bin_path);
+            free(cmd_path);
+            free(command_path);
+            return 1;
+        }
+
+        fprintf(cmd_file, "@echo off\r\nlia \"%%~dp0\\..\\%s\\%s\" %%*\r\n", package_name, bin_path);
+        if (fclose(cmd_file) != 0) {
+            fprintf(stderr, "lia: failed to write package bin %s\n", cmd_path);
+            free(bin_path);
+            free(cmd_path);
+            free(command_path);
+            return 1;
+        }
+        free(cmd_path);
+#endif
+        free(bin_path);
         free(command_path);
         if (chmod_result != 0) {
             return 1;
@@ -1269,6 +1313,22 @@ int unlink_package_bins(const char *package_name) {
             free(command_path);
             break;
         }
+
+#ifdef _WIN32
+        char *cmd_path = format_string("%s.cmd", command_path);
+        if (cmd_path == NULL) {
+            result = 1;
+            free(command_path);
+            break;
+        }
+        if (file_exists(cmd_path) && remove_tree(cmd_path) != 0) {
+            result = 1;
+            free(cmd_path);
+            free(command_path);
+            break;
+        }
+        free(cmd_path);
+#endif
         free(command_path);
     }
 
@@ -1666,6 +1726,52 @@ static int json_object_get_true(JsonEntries *entries, const char *field_name) {
            (raw[4] == '\0' || isspace((unsigned char)raw[4]));
 }
 
+static int json_raw_equals_int(const char *raw_value, int expected) {
+    char expected_text[32];
+    snprintf(expected_text, sizeof(expected_text), "%d", expected);
+
+    while (isspace((unsigned char)*raw_value)) {
+        raw_value++;
+    }
+
+    size_t expected_length = strlen(expected_text);
+    return strncmp(raw_value, expected_text, expected_length) == 0 &&
+           (raw_value[expected_length] == '\0' || isspace((unsigned char)raw_value[expected_length]));
+}
+
+static int upgrade_lockfile_to_v1(const char *packages_raw_value) {
+    char *tmp_path = format_string("%s.tmp", LIA_LOCK_FILE);
+    if (tmp_path == NULL) {
+        return 1;
+    }
+
+    FILE *file = fopen(tmp_path, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "lia: failed to open %s for writing\n", tmp_path);
+        free(tmp_path);
+        return 1;
+    }
+
+    fputs("{\n", file);
+    fprintf(file, "  \"lockfileVersion\": %d,\n", LIA_LOCKFILE_VERSION);
+    fputs("  \"packages\": ", file);
+    fputs(packages_raw_value, file);
+    fputs("\n}\n", file);
+
+    int result = fclose(file) == 0 ? 0 : 1;
+    if (result == 0 && rename(tmp_path, LIA_LOCK_FILE) != 0) {
+        fprintf(stderr, "lia: failed to replace %s\n", LIA_LOCK_FILE);
+        result = 1;
+    }
+
+    if (result == 0) {
+        printf("Upgraded %s to lockfileVersion %d\n", LIA_LOCK_FILE, LIA_LOCKFILE_VERSION);
+    }
+
+    free(tmp_path);
+    return result;
+}
+
 static int read_lock_packages(JsonEntries *packages) {
     packages->items = NULL;
     packages->count = 0;
@@ -1692,6 +1798,20 @@ static int read_lock_packages(JsonEntries *packages) {
     JsonEntry *packages_entry = find_json_entry(&root_entries, "packages");
     if (packages_entry == NULL) {
         fprintf(stderr, "lia: %s is missing required field 'packages'\n", LIA_LOCK_FILE);
+        goto done;
+    }
+
+    JsonEntry *version_entry = find_json_entry(&root_entries, "lockfileVersion");
+    if (version_entry == NULL) {
+        if (upgrade_lockfile_to_v1(packages_entry->raw_value) != 0) {
+            goto done;
+        }
+    } else if (!json_raw_equals_int(version_entry->raw_value, LIA_LOCKFILE_VERSION)) {
+        fprintf(stderr,
+                "lia: unsupported %s lockfileVersion %s; expected %d\n",
+                LIA_LOCK_FILE,
+                version_entry->raw_value,
+                LIA_LOCKFILE_VERSION);
         goto done;
     }
 

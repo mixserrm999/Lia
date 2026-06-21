@@ -1,6 +1,11 @@
 {
   "name": "smoke",
   "version": "0.1.0",
+  "description": "Smoke test package for Lia registry workflows",
+  "keywords": ["smoke", "registry", "lia"],
+  "license": "MIT",
+  "homepage": "https://example.com/smoke",
+  "repository": "https://example.com/smoke.git",
   "main": "src/smoke.lua",
   "bin": {
     "smoke-cli": "bin/smoke-cli.lua"

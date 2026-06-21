@@ -3,7 +3,7 @@ set -eu
 
 repo=${LIA_REPO:-"mixserrm999/Lia"}
 version=${LIA_VERSION:-"latest"}
-bootstrap_version=${LIA_BOOTSTRAP_VERSION:-"0.1.1"}
+bootstrap_version=${LIA_BOOTSTRAP_VERSION:-"0.1.2"}
 prefix=${LIA_PREFIX:-"$HOME/.local"}
 archive=${LIA_ARCHIVE:-}
 mode=auto

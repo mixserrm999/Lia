@@ -8,9 +8,9 @@ experience similar to Node.js and npm.
 Lia now has the MVP runtime/package-manager flow plus the Phase 2 foundation:
 modular C sources, npm-like package commands, registry version resolution,
 archive cache/offline restore, hardened publish checks, release archives, and a
-small runtime standard library. Phase 3 now includes installer UX plus daily
-npm-like workflows: strict CI installs, dev dependencies, package bin commands,
-script lifecycle hooks, and package archives.
+small runtime standard library. Phase 3 now includes installer UX, daily
+npm-like workflows, registry search/dist-tags/deprecation UX, config, doctor,
+and release bootstrap archives.
 
 ```sh
 make build
@@ -32,7 +32,11 @@ make install PREFIX="$HOME/.local"
 ./build/lia remove smoke
 ./build/lia login --token dev-token
 ./build/lia pack
-./build/lia publish
+./build/lia publish --tag beta
+./build/lia search smoke
+./build/lia deprecate smoke@0.1.0 "use smoke@0.2.0"
+./build/lia config set registry http://127.0.0.1:7788
+./build/lia doctor
 make dist
 ./build/lia install github:owner/repo@v0.1.0
 ./build/lia install
@@ -52,6 +56,13 @@ make uninstall PREFIX="$HOME/.local"
 ./build/lia login --registry http://127.0.0.1:7788 --token dev-token
 ./build/lia pack
 ./build/lia publish
+./build/lia publish --tag beta
+./build/lia search package-name
+./build/lia deprecate package-name@0.1.0 "deprecated message"
+./build/lia config set registry http://127.0.0.1:7788
+./build/lia config get registry
+./build/lia config set cache "$HOME/.lia/cache"
+./build/lia doctor
 ./build/lia install
 ./build/lia install --production
 ./build/lia ci
@@ -65,6 +76,7 @@ make uninstall PREFIX="$HOME/.local"
 ./build/lia install package-name
 ./build/lia install --save-dev package-name
 ./build/lia install package-name@0.1.0
+./build/lia install package-name@beta
 ./build/lia install 'package-name@^1.0.0'
 ./build/lia install github:owner/repo@ref
 ./build/lia install https://example.com/package.tar.gz
@@ -164,13 +176,13 @@ lia run start
 Install a specific release:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mixserrm999/Lia/main/scripts/install.sh | sh -s -- --version v0.1.1
+curl -fsSL https://raw.githubusercontent.com/mixserrm999/Lia/main/scripts/install.sh | sh -s -- --version v0.1.2
 ```
 
 Install from a local release archive:
 
 ```sh
-sh scripts/install.sh --archive dist/lia-0.1.1-linux-x64.tar.gz
+sh scripts/install.sh --archive dist/lia-0.1.2-linux-x64.tar.gz
 ```
 
 Uninstall from the default Linux prefix:
@@ -209,7 +221,8 @@ overwrite an existing manifest unless `--force` is passed.
 
 `lia check` validates the project manifest. It requires `name`, `version`, and
 `main` string fields, plus `scripts` and `dependencies` objects. It also
-validates optional `devDependencies` and `bin` fields when they are present.
+validates optional `devDependencies`, `bin`, `description`, `license`,
+`homepage`, `repository`, and `keywords` fields when they are present.
 
 `lia run <script>` reads a command from `scripts` in `lia.json`, runs optional
 `pre<script>` and `post<script>` lifecycle hooks, prepends `packages/.bin` to
@@ -242,6 +255,7 @@ Registry installs use `LIA_REGISTRY_URL`, defaulting to
 ```sh
 LIA_REGISTRY_URL=http://127.0.0.1:7788 lia install smoke@0.1.0
 LIA_REGISTRY_URL=http://127.0.0.1:7788 lia install 'smoke@^0.1.0'
+LIA_REGISTRY_URL=http://127.0.0.1:7788 lia install smoke@beta
 LIA_REGISTRY_URL=http://127.0.0.1:7788 lia install smoke
 ```
 
@@ -250,7 +264,19 @@ at `$HOME/.lia/credentials.json`. `lia pack` creates a local
 `<name>-<version>.tar.gz` package archive. `lia publish` uses the same archive
 logic, excluding `.git`, build/cache/package directories, and uploads it to the
 configured registry. The local registry rejects duplicate published versions and
-records package ownership by token.
+records package ownership by token. `lia publish --tag beta` records a dist-tag,
+and packages can be installed with `lia install package@beta`.
+
+`lia search <term>` queries the configured registry. `lia deprecate
+package@version <message>` records a deprecation message for an owned package
+version.
+
+`lia config set registry <url>` writes `$HOME/.lia/config.json`; this registry
+is used when `LIA_REGISTRY_URL` is not set. `lia config set cache <path>`
+configures the archive cache when `LIA_CACHE_DIR` is not set. `lia doctor`
+checks common tools, manifest validity, lockfile version, and registry health.
+Old lockfiles without `lockfileVersion` are upgraded to lockfile version 1 when
+Lia restores from them.
 
 Packages can expose command-line tools through `bin`. Lia creates executable
 shims in `packages/.bin` when a package is installed:
@@ -259,6 +285,9 @@ shims in `packages/.bin` when a package is installed:
 {
   "name": "smoke",
   "version": "0.1.0",
+  "description": "Smoke test package for Lia registry workflows",
+  "keywords": ["smoke", "registry", "lia"],
+  "license": "MIT",
   "main": "src/smoke.lua",
   "bin": {
     "smoke-cli": "bin/smoke-cli.lua"
@@ -347,12 +376,15 @@ Registry API:
 
 ```txt
 GET /health
+GET /search?q=<term>
 GET /packages/<name>
+GET /packages/<name>/dist-tags
 GET /packages/<name>/<version>
 GET /packages/<name>/latest
 GET /tarballs/<name>/<version>/<archive>
 GET /auth/check
-PUT /publish
+PUT /publish?tag=<tag>
+PUT /deprecate/<name>/<version>
 ```
 
 ## Requirements

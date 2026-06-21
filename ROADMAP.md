@@ -178,6 +178,42 @@ commands, script lifecycle hooks, and local package archives.
       - smoke tests cover CI restore, dev dependencies, bin shims, lifecycle
         scripts, and pack archives
 
+## Phase 3.3 Registry UX
+
+Phase 3.3 improves the registry experience without starting Phase 4 hosted
+registry work.
+
+20. Registry search, metadata, dist-tags, and deprecation.
+    - Status: completed
+    - Success criteria:
+      - `lia search <term>` queries the configured registry
+      - package manifests can include `description`, `license`, `keywords`,
+        `homepage`, and `repository`
+      - registry metadata returns package metadata, `dist-tags`, and
+        deprecation messages
+      - `lia publish --tag <tag>` records a dist-tag such as `beta`
+      - `lia install package@tag` resolves registry dist-tags
+      - `lia deprecate package@version <message>` records a deprecation message
+      - smoke tests cover search, tag installs, tagged publish, and deprecation
+
+## Phase 3.4 Developer Quality
+
+Phase 3.4 focuses on quality-of-life tooling before any Phase 4 features.
+
+21. Developer diagnostics and config.
+    - Status: completed
+    - Success criteria:
+      - `lia doctor` checks common tools, manifest validity, lockfile version,
+        and registry health
+      - `lia config get/set registry` configures the default registry when
+        `LIA_REGISTRY_URL` is not set
+      - `lia config get/set cache` configures archive cache location when
+        `LIA_CACHE_DIR` is not set
+      - old lockfiles without `lockfileVersion` upgrade to lockfile version 1
+        during lockfile restore
+      - Windows package bin installs also create `.cmd` shims
+      - smoke tests cover config, doctor, and lockfile upgrade behavior
+
 ## Latest Progress
 
 - 2026-06-21: Started Step 1 by scaffolding a C-based `lia` runner that embeds
@@ -269,3 +305,11 @@ commands, script lifecycle hooks, and local package archives.
   `devDependencies`, `lia install --save-dev`, production lockfile restores,
   package `bin` shims in `packages/.bin`, lifecycle scripts for `lia run`, and
   `lia pack` shared with publish archive creation.
+- 2026-06-21: Completed Phase 3.3 registry UX. Added registry search, manifest
+  metadata, dist-tags, `lia publish --tag`, registry tag installs, and
+  `lia deprecate`.
+- 2026-06-21: Completed Phase 3.4 developer quality. Added `lia doctor`,
+  `lia config get/set`, lockfile version upgrade behavior, and Windows `.cmd`
+  package bin shims.
+- 2026-06-21: Prepared v0.1.2 release housekeeping. Bumped Lia to 0.1.2 and
+  regenerated Linux and Windows bootstrap archives with updated `SHA256SUMS`.

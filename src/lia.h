@@ -25,7 +25,7 @@
 #include "lualib.h"
 
 #ifndef LIA_VERSION
-#define LIA_VERSION "0.1.1"
+#define LIA_VERSION "0.1.2"
 #endif
 
 #define LIA_MANIFEST_FILE "lia.json"
@@ -33,6 +33,7 @@
 #define LIA_PACKAGES_DIR "packages"
 #define LIA_PACKAGE_BIN_DIR "packages/.bin"
 #define LIA_TMP_DIR ".lia/tmp/install"
+#define LIA_LOCKFILE_VERSION 1
 
 typedef struct {
     char *key;
@@ -127,12 +128,17 @@ int read_optional_manifest_bin(JsonEntries *root_entries, const char *package_na
 int load_project_manifest(ProjectManifest *manifest);
 
 char *default_registry_url(void);
+char *lia_config_get(const char *key);
 int run_init(int argc, char **argv);
 int run_check(int argc, char **argv);
 int run_manifest_script(int argc, char **argv);
 int run_login(int argc, char **argv);
 int run_publish(int argc, char **argv);
 int run_pack(int argc, char **argv);
+int run_search(int argc, char **argv);
+int run_deprecate(int argc, char **argv);
+int run_config(int argc, char **argv);
+int run_doctor(int argc, char **argv);
 int run_install(int argc, char **argv);
 int run_ci(int argc, char **argv);
 int run_update(int argc, char **argv);

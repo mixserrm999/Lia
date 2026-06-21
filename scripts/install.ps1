@@ -2,7 +2,7 @@ param(
     [string]$Prefix = $(if ($env:LIA_PREFIX) { $env:LIA_PREFIX } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Lia" } else { Join-Path $HOME ".lia" }),
     [string]$Repo = $(if ($env:LIA_REPO) { $env:LIA_REPO } else { "mixserrm999/Lia" }),
     [string]$Version = $(if ($env:LIA_VERSION) { $env:LIA_VERSION } else { "latest" }),
-    [string]$BootstrapVersion = $(if ($env:LIA_BOOTSTRAP_VERSION) { $env:LIA_BOOTSTRAP_VERSION } else { "0.1.1" }),
+    [string]$BootstrapVersion = $(if ($env:LIA_BOOTSTRAP_VERSION) { $env:LIA_BOOTSTRAP_VERSION } else { "0.1.2" }),
     [string]$Archive = $(if ($env:LIA_ARCHIVE) { $env:LIA_ARCHIVE } else { "" }),
     [switch]$FromSource,
     [switch]$NoBuild,

@@ -1,5 +1,5 @@
 LUA_VERSION ?= 5.4.7
-LIA_VERSION ?= 0.1.1
+LIA_VERSION ?= 0.1.2
 
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra
@@ -78,6 +78,7 @@ INIT_TEST_DIR := $(BUILD_DIR)/init-smoke
 INSTALL_TEST_DIR := $(BUILD_DIR)/install-smoke
 PACKAGE_UX_TEST_DIR := $(BUILD_DIR)/package-ux-smoke
 PHASE32_TEST_DIR := $(BUILD_DIR)/phase32-smoke
+PHASE34_HOME := $(BUILD_DIR)/phase34-home
 MANIFEST_TEST_DIR := $(BUILD_DIR)/manifest-smoke
 REGISTRY_TEST_DIR := $(BUILD_DIR)/registry-smoke
 REGISTRY_RANGE_TEST_DIR := $(BUILD_DIR)/registry-range-smoke
@@ -256,6 +257,12 @@ test: build
 	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) ci
 	test -f $(PHASE32_TEST_DIR)/packages/smoke/lia.json
 	grep -q '"smoke": {"version": "0.1.0", "source": "../smoke-0.1.0.tar.gz", "integrity": "sha256:.*", "path": "packages/smoke", "dev": true}' $(PHASE32_TEST_DIR)/lia-lock.json
+	cp $(PHASE32_TEST_DIR)/lia-lock.json $(PHASE32_TEST_DIR)/lia-lock.json.ok
+	sed -i '/"lockfileVersion":/d' $(PHASE32_TEST_DIR)/lia-lock.json
+	rm -rf $(PHASE32_TEST_DIR)/packages
+	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) install > upgrade.log
+	grep -q 'Upgraded lia-lock.json to lockfileVersion 1' $(PHASE32_TEST_DIR)/upgrade.log
+	grep -q '"lockfileVersion": 1' $(PHASE32_TEST_DIR)/lia-lock.json
 	cp $(PHASE32_TEST_DIR)/lia.json $(PHASE32_TEST_DIR)/lia.json.ok
 	sed -i 's#../smoke-0.1.0.tar.gz#../missing.tar.gz#' $(PHASE32_TEST_DIR)/lia.json
 	cd $(PHASE32_TEST_DIR) && ! ../../$(LIA_BIN) ci
@@ -266,6 +273,13 @@ test: build
 	! tar -tzf $(PHASE32_TEST_DIR)/phase32-smoke-0.1.0.tar.gz | grep -q './packages/'
 	cd $(PHASE32_TEST_DIR) && ../../$(LIA_BIN) remove smoke
 	test ! -e $(PHASE32_TEST_DIR)/packages/.bin/smoke-cli
+	rm -rf $(PHASE34_HOME)
+	mkdir -p $(PHASE34_HOME)
+	HOME=$(CURDIR)/$(PHASE34_HOME) ./$(LIA_BIN) config set registry http://127.0.0.1:$(REGISTRY_PORT)
+	HOME=$(CURDIR)/$(PHASE34_HOME) ./$(LIA_BIN) config get registry | grep -q 'http://127.0.0.1:$(REGISTRY_PORT)'
+	HOME=$(CURDIR)/$(PHASE34_HOME) ./$(LIA_BIN) config set cache $(CURDIR)/$(LIA_CACHE_DIR)
+	HOME=$(CURDIR)/$(PHASE34_HOME) ./$(LIA_BIN) config get cache | grep -q '$(CURDIR)/$(LIA_CACHE_DIR)'
+	HOME=$(CURDIR)/$(PHASE34_HOME) ./$(LIA_BIN) doctor | grep -q 'lia: $(LIA_VERSION)'
 	rm -rf $(REGISTRY_TEST_DIR) $(REGISTRY_RANGE_TEST_DIR) $(REGISTRY_LATEST_TEST_DIR) $(PUBLISH_TEST_DIR) $(PUBLISH_INSTALL_TEST_DIR) $(PUBLISH_HOME) $(REGISTRY_ROOT) $(LIA_CACHE_DIR)
 	mkdir -p $(REGISTRY_ROOT)/packages/smoke/0.1.0 $(REGISTRY_ROOT)/packages/smoke/0.2.0 $(REGISTRY_TEST_DIR) $(REGISTRY_RANGE_TEST_DIR) $(REGISTRY_LATEST_TEST_DIR)
 	cp $(INSTALL_ARCHIVE) $(REGISTRY_ROOT)/packages/smoke/0.1.0/smoke-0.1.0.tar.gz
@@ -280,6 +294,8 @@ test: build
 		done; \
 		test $$ready -eq 1; \
 		curl -fsSL http://127.0.0.1:$(REGISTRY_PORT)/packages/smoke/0.1.0 | grep -q '"name": "smoke"'; \
+		curl -fsSL http://127.0.0.1:$(REGISTRY_PORT)/packages/smoke | grep -q '"dist-tags"'; \
+		HOME=$(CURDIR)/$(PHASE34_HOME) ./$(LIA_BIN) search smoke | grep -q 'smoke@0.2.0 Smoke test package'; \
 		( cd $(REGISTRY_TEST_DIR) && ../../$(LIA_BIN) init --name registry-smoke --main src/main.lua && \
 			LIA_REGISTRY_URL=http://127.0.0.1:$(REGISTRY_PORT) ../../$(LIA_BIN) install smoke@0.1.0 && \
 			LIA_REGISTRY_URL=http://127.0.0.1:$(REGISTRY_PORT) ../../$(LIA_BIN) outdated | grep -q 'smoke current=0.1.0 latest=0.2.0' && \
@@ -304,17 +320,23 @@ test: build
 		( cd $(PUBLISH_TEST_DIR) && ../../$(LIA_BIN) init --name published --main src/main.lua && \
 			printf 'return { name = function() return "published-package" end }\n' > src/main.lua && \
 			HOME=$(CURDIR)/$(PUBLISH_HOME) ../../$(LIA_BIN) login --registry http://127.0.0.1:$(REGISTRY_PORT) --token $(REGISTRY_TOKEN) && \
-			HOME=$(CURDIR)/$(PUBLISH_HOME) ../../$(LIA_BIN) publish && \
-			! HOME=$(CURDIR)/$(PUBLISH_HOME) ../../$(LIA_BIN) publish ); \
+			HOME=$(CURDIR)/$(PUBLISH_HOME) ../../$(LIA_BIN) publish --tag beta && \
+			! HOME=$(CURDIR)/$(PUBLISH_HOME) ../../$(LIA_BIN) publish --tag beta && \
+			HOME=$(CURDIR)/$(PUBLISH_HOME) ../../$(LIA_BIN) deprecate published@0.1.0 "old package" ); \
 		curl -fsSL http://127.0.0.1:$(REGISTRY_PORT)/packages/published/0.1.0 | grep -q '"name": "published"'; \
+		curl -fsSL http://127.0.0.1:$(REGISTRY_PORT)/packages/published/0.1.0 | grep -q '"deprecated": "old package"'; \
+		curl -fsSL http://127.0.0.1:$(REGISTRY_PORT)/packages/published | grep -q '"beta": "0.1.0"'; \
+		./$(LIA_BIN) search published --registry http://127.0.0.1:$(REGISTRY_PORT) | grep -q 'deprecated=old package'; \
 		( cd $(PUBLISH_INSTALL_TEST_DIR) && ../../$(LIA_BIN) init --name publish-install-smoke --main src/main.lua && \
-			LIA_REGISTRY_URL=http://127.0.0.1:$(REGISTRY_PORT) ../../$(LIA_BIN) install published@0.1.0 && \
+			LIA_REGISTRY_URL=http://127.0.0.1:$(REGISTRY_PORT) ../../$(LIA_BIN) install published@beta && \
 			test -f packages/published/lia.json && \
-			grep -q '"published": "published@0.1.0"' lia.json ); \
+			grep -q '"published": "published@beta"' lia.json ); \
 	)
 	rm -rf $(MANIFEST_TEST_DIR)
 	mkdir -p $(MANIFEST_TEST_DIR)
 	printf '{"name":"bad"}\n' > $(MANIFEST_TEST_DIR)/lia.json
+	cd $(MANIFEST_TEST_DIR) && ! ../../$(LIA_BIN) check
+	printf '{"name":"bad","version":"0.1.0","main":"src/main.lua","scripts":{},"dependencies":{},"keywords":"bad"}\n' > $(MANIFEST_TEST_DIR)/lia.json
 	cd $(MANIFEST_TEST_DIR) && ! ../../$(LIA_BIN) check
 	printf '{"name":"bad","version":"0.1.0","main":"src/main.lua","scripts":{},"dependencies":{"bad":"../bad.tar.gz#^bad"}}\n' > $(MANIFEST_TEST_DIR)/lia.json
 	cd $(MANIFEST_TEST_DIR) && ! ../../$(LIA_BIN) check

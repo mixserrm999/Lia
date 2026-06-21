@@ -329,6 +329,77 @@ int read_optional_manifest_bin(JsonEntries *root_entries, const char *package_na
     return 0;
 }
 
+static int validate_optional_manifest_string(JsonEntries *root_entries, const char *field_name) {
+    JsonEntry *entry = find_json_entry(root_entries, field_name);
+    if (entry == NULL) {
+        return 0;
+    }
+
+    char *value = json_raw_to_string(entry->raw_value);
+    if (value == NULL || (value[0] != '\0' && !is_non_empty_text(value))) {
+        fprintf(stderr, "lia: %s field '%s' must be a string\n", LIA_MANIFEST_FILE, field_name);
+        free(value);
+        return 1;
+    }
+
+    free(value);
+    return 0;
+}
+
+static int validate_optional_keywords(JsonEntries *root_entries) {
+    JsonEntry *entry = find_json_entry(root_entries, "keywords");
+    if (entry == NULL) {
+        return 0;
+    }
+
+    const char *raw = entry->raw_value;
+    const char *end = raw + strlen(raw);
+    while (raw < end && isspace((unsigned char)*raw)) {
+        raw++;
+    }
+    while (end > raw && isspace((unsigned char)*(end - 1))) {
+        end--;
+    }
+
+    if (raw >= end || *raw != '[' || *(end - 1) != ']') {
+        fprintf(stderr, "lia: %s field 'keywords' must be an array of strings\n", LIA_MANIFEST_FILE);
+        return 1;
+    }
+
+    int in_string = 0;
+    int escaped = 0;
+    for (const char *cursor = raw + 1; cursor < end - 1; cursor++) {
+        char ch = *cursor;
+        if (in_string) {
+            if (escaped) {
+                escaped = 0;
+            } else if (ch == '\\') {
+                escaped = 1;
+            } else if (ch == '"') {
+                in_string = 0;
+            }
+            continue;
+        }
+
+        if (ch == '"') {
+            in_string = 1;
+            continue;
+        }
+
+        if (!isspace((unsigned char)ch) && ch != ',') {
+            fprintf(stderr, "lia: %s field 'keywords' must be an array of strings\n", LIA_MANIFEST_FILE);
+            return 1;
+        }
+    }
+
+    if (in_string) {
+        fprintf(stderr, "lia: %s field 'keywords' must be an array of strings\n", LIA_MANIFEST_FILE);
+        return 1;
+    }
+
+    return 0;
+}
+
 int load_project_manifest(ProjectManifest *manifest) {
     init_project_manifest(manifest);
 
@@ -368,7 +439,12 @@ int load_project_manifest(ProjectManifest *manifest) {
     if (validate_string_object_values("scripts", &manifest->scripts, 0) != 0 ||
         validate_string_object_values("dependencies", &manifest->dependencies, 1) != 0 ||
         validate_string_object_values("devDependencies", &manifest->dev_dependencies, 1) != 0 ||
-        read_optional_manifest_bin(&root_entries, manifest->name, &manifest->bin) != 0) {
+        read_optional_manifest_bin(&root_entries, manifest->name, &manifest->bin) != 0 ||
+        validate_optional_manifest_string(&root_entries, "description") != 0 ||
+        validate_optional_manifest_string(&root_entries, "license") != 0 ||
+        validate_optional_manifest_string(&root_entries, "homepage") != 0 ||
+        validate_optional_manifest_string(&root_entries, "repository") != 0 ||
+        validate_optional_keywords(&root_entries) != 0) {
         goto done;
     }
 
