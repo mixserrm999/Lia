@@ -121,7 +121,9 @@ Current stdlib modules:
 ## Installation
 
 Lia release installs include the Lua runtime and the package-manager CLI in one
-`lia` binary. Users do not need to install Lua separately.
+`lia` binary. Users do not need to install Lua separately. Installers download
+GitHub Release assets first and fall back to the tracked bootstrap archives in
+`dist/` if a GitHub Release has not been published yet.
 
 Ubuntu/Linux one-line install:
 
@@ -273,6 +275,17 @@ The GitHub Actions workflow in `.github/workflows/release.yml` builds Linux and
 Windows artifacts for tag pushes and manual runs. On tag pushes, it also creates
 or updates the matching GitHub Release and uploads `.tar.gz`, `.zip`, and a
 combined `SHA256SUMS` file. The release script is `tools/make_dist.py`.
+
+The repository also tracks bootstrap release archives under `dist/` so the
+one-line installers still work before GitHub Actions has published a formal
+Release. Regenerate them with:
+
+```sh
+rm -rf dist
+make dist DIST_PLATFORM=linux-x64
+make dist DIST_PLATFORM=windows-x64 OS=Windows_NT CC=x86_64-w64-mingw32-gcc
+cd dist && sha256sum -c SHA256SUMS
+```
 
 ## Registry
 

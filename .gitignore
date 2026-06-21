@@ -1,5 +1,8 @@
 build/
-dist/
+dist/*
+!dist/*.tar.gz
+!dist/*.zip
+!dist/SHA256SUMS
 third_party/
 .lia/
 __pycache__/

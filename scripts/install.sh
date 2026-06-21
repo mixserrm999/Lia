@@ -3,6 +3,7 @@ set -eu
 
 repo=${LIA_REPO:-"mixserrm999/Lia"}
 version=${LIA_VERSION:-"latest"}
+bootstrap_version=${LIA_BOOTSTRAP_VERSION:-"0.1.1"}
 prefix=${LIA_PREFIX:-"$HOME/.local"}
 archive=${LIA_ARCHIVE:-}
 mode=auto
@@ -34,6 +35,8 @@ Environment:
   LIA_PREFIX         Default install prefix
   LIA_REPO           GitHub repository
   LIA_VERSION        Release tag or version
+  LIA_BOOTSTRAP_VERSION
+                     Fallback version used when GitHub Releases are unavailable
   LIA_ARCHIVE        Local or remote release archive
   LIA_PROFILE        Shell profile to update, default: $HOME/.profile
 EOF
@@ -67,12 +70,24 @@ download_to_file() {
     fi
 }
 
-download_to_stdout() {
+try_download_to_file() {
+    url=$1
+    output=$2
+    if have curl; then
+        curl -fsSL "$url" -o "$output" 2>/dev/null
+    elif have wget; then
+        wget -q "$url" -O "$output" 2>/dev/null
+    else
+        fail "curl or wget is required to download release assets"
+    fi
+}
+
+try_download_to_stdout() {
     url=$1
     if have curl; then
-        curl -fsSL "$url"
+        curl -fsSL "$url" 2>/dev/null
     elif have wget; then
-        wget -q "$url" -O -
+        wget -q "$url" -O - 2>/dev/null
     else
         fail "curl or wget is required to download release metadata"
     fi
@@ -109,11 +124,23 @@ version_from_tag() {
 }
 
 latest_tag() {
-    metadata=$(download_to_stdout "https://api.github.com/repos/$repo/releases/latest") ||
-        fail "failed to read latest release metadata from GitHub"
+    metadata=$(try_download_to_stdout "https://api.github.com/repos/$repo/releases/latest") ||
+        return 1
     tag=$(printf '%s\n' "$metadata" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-    [ -n "$tag" ] || fail "GitHub latest release response did not include tag_name"
+    [ -n "$tag" ] || return 1
     echo "$tag"
+}
+
+asset_url() {
+    source=$1
+    tag=$2
+    name=$3
+
+    if [ "$source" = "release" ]; then
+        echo "https://github.com/$repo/releases/download/$tag/$name"
+    else
+        echo "https://raw.githubusercontent.com/$repo/$tag/dist/$name"
+    fi
 }
 
 install_binary() {
@@ -193,18 +220,25 @@ install_from_archive() {
             cp "$archive" "$archive_path"
         fi
     else
+        asset_source=release
         if [ "$version" = "latest" ]; then
-            tag=$(latest_tag)
+            if ! tag=$(latest_tag); then
+                tag=$(normalize_tag "$bootstrap_version")
+                asset_source=raw
+            fi
         else
             tag=$(normalize_tag "$version")
         fi
         asset_version=$(version_from_tag "$tag")
         archive_name="lia-$asset_version-$platform.tar.gz"
         archive_path=$tmp_dir/$archive_name
-        download_to_file "https://github.com/$repo/releases/download/$tag/$archive_name" "$archive_path"
+        if ! try_download_to_file "$(asset_url "$asset_source" "$tag" "$archive_name")" "$archive_path"; then
+            asset_source=raw
+            download_to_file "$(asset_url "$asset_source" "$tag" "$archive_name")" "$archive_path"
+        fi
 
         checksum_path=$tmp_dir/SHA256SUMS
-        if download_to_file "https://github.com/$repo/releases/download/$tag/SHA256SUMS" "$checksum_path"; then
+        if try_download_to_file "$(asset_url "$asset_source" "$tag" "SHA256SUMS")" "$checksum_path"; then
             if have sha256sum; then
                 (cd "$tmp_dir" && grep "  $archive_name\$" SHA256SUMS > SHA256SUMS.one && sha256sum -c SHA256SUMS.one)
             else

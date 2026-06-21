@@ -89,7 +89,10 @@ def main():
     make_zip(stage_dir, zip_path)
 
     checksum_path = out_dir / "SHA256SUMS"
-    artifacts = [tar_path, zip_path]
+    artifacts = sorted(
+        list(out_dir.glob("lia-*.tar.gz")) + list(out_dir.glob("lia-*.zip")),
+        key=lambda path: path.name,
+    )
     checksum_path.write_text(
         "".join(f"{sha256(path)}  {path.name}\n" for path in artifacts),
         encoding="utf-8",

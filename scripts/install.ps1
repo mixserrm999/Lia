@@ -2,6 +2,7 @@ param(
     [string]$Prefix = $(if ($env:LIA_PREFIX) { $env:LIA_PREFIX } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Lia" } else { Join-Path $HOME ".lia" }),
     [string]$Repo = $(if ($env:LIA_REPO) { $env:LIA_REPO } else { "mixserrm999/Lia" }),
     [string]$Version = $(if ($env:LIA_VERSION) { $env:LIA_VERSION } else { "latest" }),
+    [string]$BootstrapVersion = $(if ($env:LIA_BOOTSTRAP_VERSION) { $env:LIA_BOOTSTRAP_VERSION } else { "0.1.1" }),
     [string]$Archive = $(if ($env:LIA_ARCHIVE) { $env:LIA_ARCHIVE } else { "" }),
     [switch]$FromSource,
     [switch]$NoBuild,
@@ -37,6 +38,8 @@ Environment:
   LIA_PREFIX         Default install prefix
   LIA_REPO           GitHub repository
   LIA_VERSION        Release tag or version
+  LIA_BOOTSTRAP_VERSION
+                    Fallback version used when GitHub Releases are unavailable
   LIA_ARCHIVE        Local or remote release archive
 "@
 }
@@ -86,6 +89,22 @@ function Get-LatestTag {
         Fail "GitHub latest release response did not include tag_name"
     }
     return [string]$metadata.tag_name
+}
+
+function Try-GetLatestTag {
+    try {
+        return Get-LatestTag
+    } catch {
+        return $null
+    }
+}
+
+function Get-AssetUrl($Source, $Tag, $Name) {
+    if ($Source -eq "release") {
+        return "https://github.com/$Repo/releases/download/$Tag/$Name"
+    }
+
+    return "https://raw.githubusercontent.com/$Repo/$Tag/dist/$Name"
 }
 
 function Verify-Checksum($ArchivePath, $ArchiveName, $ChecksumPath) {
@@ -188,15 +207,30 @@ function Install-FromArchive {
                 Copy-Item $Archive $archivePath
             }
         } else {
-            $tag = if ($Version -eq "latest") { Get-LatestTag } else { Normalize-Tag $Version }
+            $assetSource = "release"
+            if ($Version -eq "latest") {
+                $tag = Try-GetLatestTag
+                if (-not $tag) {
+                    $tag = Normalize-Tag $BootstrapVersion
+                    $assetSource = "raw"
+                }
+            } else {
+                $tag = Normalize-Tag $Version
+            }
+
             $assetVersion = Get-VersionFromTag $tag
             $archiveName = "lia-$assetVersion-$platform.zip"
             $archivePath = Join-Path $tmpDir $archiveName
-            Download-File "https://github.com/$Repo/releases/download/$tag/$archiveName" $archivePath
+            try {
+                Download-File (Get-AssetUrl $assetSource $tag $archiveName) $archivePath
+            } catch {
+                $assetSource = "raw"
+                Download-File (Get-AssetUrl $assetSource $tag $archiveName) $archivePath
+            }
 
             $checksumPath = Join-Path $tmpDir "SHA256SUMS"
             try {
-                Download-File "https://github.com/$Repo/releases/download/$tag/SHA256SUMS" $checksumPath
+                Download-File (Get-AssetUrl $assetSource $tag "SHA256SUMS") $checksumPath
                 Verify-Checksum $archivePath $archiveName $checksumPath
             } catch {
                 Remove-Item $checksumPath -Force -ErrorAction SilentlyContinue

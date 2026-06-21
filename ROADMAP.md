@@ -150,6 +150,8 @@ step should provide both the Lua runtime and the Lia package-manager CLI.
       - installers support uninstall and source-checkout development installs
       - tag pushes create or update a GitHub Release with Linux and Windows
         archives plus a combined checksum file
+      - tracked bootstrap archives provide a fallback install source when
+        GitHub Releases are unavailable
       - smoke tests install from a generated release archive
 
 ## Latest Progress
@@ -236,3 +238,6 @@ step should provide both the Lua runtime and the Lia package-manager CLI.
   now support one-line release installs, release checksum verification, PATH
   setup, uninstall, source-checkout installs, and release-archive smoke tests.
   The release workflow now publishes GitHub Release assets for tag pushes.
+- 2026-06-21: Added bootstrap archive fallback for installers. If GitHub
+  Releases are unavailable, installers can download checked-in `dist/` archives
+  from the repository/tag and still verify `SHA256SUMS`.
