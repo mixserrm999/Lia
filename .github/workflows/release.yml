@@ -1,0 +1,57 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl tar unzip python3
+      - name: Test
+        run: make test
+      - name: Package
+        run: make dist DIST_PLATFORM=linux-x64
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lia-linux-x64
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-x86_64-gcc
+            curl
+            tar
+            unzip
+            python
+      - name: Build
+        run: make build CC=gcc
+      - name: Package
+        run: make dist DIST_PLATFORM=windows-x64 CC=gcc
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lia-windows-x64
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS

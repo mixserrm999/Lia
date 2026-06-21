@@ -1,0 +1,9 @@
+{
+  "name": "feature",
+  "version": "0.1.0",
+  "main": "src/feature.lua",
+  "dependencies": {
+    "base": "../base-0.1.0.tar.gz#^0.1.0"
+  }
+}
+
