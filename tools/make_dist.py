@@ -44,6 +44,16 @@ def stage_release(binary, version, platform, out_dir):
     return package_name, stage_dir
 
 
+def clean_platform_artifacts(out_dir, platform):
+    for suffix in [".tar.gz", ".zip"]:
+        for path in out_dir.glob(f"lia-*-{platform}{suffix}"):
+            path.unlink()
+
+    for path in out_dir.glob(f"lia-*-{platform}"):
+        if path.is_dir():
+            shutil.rmtree(path)
+
+
 def make_tar_gz(stage_dir, archive_path):
     with tarfile.open(archive_path, "w:gz") as archive:
         archive.add(stage_dir, arcname=stage_dir.name)
@@ -70,6 +80,7 @@ def main():
 
     out_dir = (ROOT / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    clean_platform_artifacts(out_dir, args.platform)
     package_name, stage_dir = stage_release(binary, args.version, args.platform, out_dir)
 
     tar_path = out_dir / f"{package_name}.tar.gz"
